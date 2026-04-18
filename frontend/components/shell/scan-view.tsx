@@ -13,6 +13,7 @@ import { FolderEntry } from "./folder-entry";
 import { FolderPicker } from "./folder-picker";
 import { useToast } from "../ui/toast";
 import { api, ApiError, type Filemap, type FiletreeNode } from "../../lib/api-client";
+import { sessionStore } from "../BatchRun/session-store";
 
 // Stratum color palette — matches the spectrum bar design.
 const STRATUM_COLORS = [
@@ -37,6 +38,46 @@ export function ScanView() {
   const { scan, folder, setStage, setScan, setFolder } = useAppState();
   const toast = useToast();
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  // "Skip to batch" — auto-create a taste session, lock every stratum at
+  // defaults, then jump to the Batch stage. The Level B batch reads filemaps
+  // directly so pipelines default to {} (tesseract OCR, tables on, formulas
+  // off). Users who want to tune per-stratum should use Taste instead.
+  const skipToBatch = useMutation({
+    mutationFn: async () => {
+      if (!scan) throw new ApiError(0, "no_scan", "Scan first");
+      const defaultOutputDir = `${scan.folder.replace(/\/$/, "")}/.docling-out`;
+      let session = await api.createTasteSession({
+        scan_id: scan.scan_id,
+        output_dir: defaultOutputDir,
+      });
+      for (const s of session.strata ?? []) {
+        // Serial lock — each PATCH returns a new version we must use next.
+        session = await api.patchTasteSession(session.id, {
+          version: session.version ?? 0,
+          lock_stratum: { stratum: s.name, locked: true },
+        });
+      }
+      return session;
+    },
+    onSuccess: (session) => {
+      sessionStore.setTasteSessionId(session.id);
+      sessionStore.setOutputDir(session.output_dir);
+      toast.push({
+        kind: "success",
+        title: "Skipped taste",
+        detail: `All ${session.strata.length} strata locked at default pipelines. Review the plan on Batch.`,
+      });
+      setStage("batch");
+    },
+    onError: (err) => {
+      toast.push({
+        kind: "danger",
+        title: "Couldn't skip to batch",
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    },
+  });
 
   const rescan = useMutation({
     mutationFn: async (folderPath: string) =>
@@ -112,6 +153,15 @@ export function ScanView() {
         </Button>
         <Button variant="ghost" size="sm">
           Edit inclusions
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => skipToBatch.mutate()}
+          disabled={skipToBatch.isPending}
+          title="Lock all strata at defaults and go straight to Batch"
+        >
+          {skipToBatch.isPending ? "Preparing…" : "Skip to batch →"}
         </Button>
         <Button variant="primary" size="sm" onClick={() => setStage("taste")}>
           Continue to taste <Kbd>↵</Kbd>

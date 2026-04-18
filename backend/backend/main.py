@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 from pathlib import Path
 
 # Route model caches into data/cache/ BEFORE any Docling import
@@ -88,8 +87,8 @@ async def health() -> Health:
 
 # Wave 1 routers — each module owns its own router.py. Agents fill in endpoints.
 from backend.conversion.router import router as conversion_router  # noqa: E402
-from backend.stratification.router import router as scan_router  # noqa: E402
 from backend.jobs.router import router as jobs_router  # noqa: E402
+from backend.stratification.router import router as scan_router  # noqa: E402
 
 app.include_router(conversion_router)
 app.include_router(scan_router)

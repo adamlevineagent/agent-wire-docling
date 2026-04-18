@@ -92,9 +92,13 @@ export function useTasteSession(opts: { scan_id: string | null; output_dir: stri
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scan_id, sessionId]);
 
+  // The session we have in-hand. createMut.data wins immediately after create
+  // (no GET roundtrip needed); sessionQuery.data wins on page reload.
+  const session: TasteSession | null =
+    sessionQuery.data ?? createMut.data ?? null;
+
   // If the hydrated session belongs to a DIFFERENT scan than the current one,
   // surface a toast and allow the user to recreate.
-  const session = sessionQuery.data ?? null;
   const mismatchedScan =
     !!session && !!scan_id && session.scan_id !== scan_id;
 
@@ -140,18 +144,30 @@ export function useTasteSession(opts: { scan_id: string | null; output_dir: stri
     () => ({
       session,
       sessionId,
-      loading: sessionQuery.isLoading || createMut.isPending,
+      // If we already have session data, we're not "loading" — even if a
+      // background refetch is in flight.
+      loading: !session && (sessionQuery.isLoading || createMut.isPending),
       error: (sessionQuery.error as ApiError | null) ?? null,
       mismatchedScan,
       recreate: () => {
         setSessionId(null);
         autoCreateTriggered.current = false;
+        createMut.reset();
         createMut.mutate();
       },
       patch: (sub: Omit<TasteSessionPatch, "version">) => patchMut.mutateAsync(sub),
       patchPending: patchMut.isPending,
       refresh,
     }),
-    [session, sessionId, sessionQuery, createMut, patchMut, mismatchedScan, refresh],
+    [
+      session,
+      sessionId,
+      sessionQuery.isLoading,
+      sessionQuery.error,
+      createMut,
+      patchMut,
+      mismatchedScan,
+      refresh,
+    ],
   );
 }

@@ -7,6 +7,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { useAppState } from "./app-state";
 import { useToast } from "../ui/toast";
+import { FolderPicker } from "./folder-picker";
 
 function looksAbsolute(p: string) {
   return p.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(p);
@@ -16,6 +17,7 @@ export function FolderInput() {
   const { folder, setFolder, setScan, registerPathInputFocuser } = useAppState();
   const [value, setValue] = useState(folder);
   const [clientError, setClientError] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
 
@@ -106,7 +108,28 @@ export function FolderInput() {
         >
           {scan.isPending ? "Scanning…" : "Validate"}
         </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={scan.isPending}
+          onClick={() => setPickerOpen(true)}
+          title="Browse for folder"
+        >
+          Browse…
+        </Button>
       </div>
+      {pickerOpen && (
+        <FolderPicker
+          initialPath={value && looksAbsolute(value) ? value : null}
+          onPick={(path) => {
+            setValue(path);
+            setClientError(null);
+            setPickerOpen(false);
+            scan.mutate(path);
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
     </div>
   );
 }

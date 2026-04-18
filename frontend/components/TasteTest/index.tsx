@@ -333,7 +333,9 @@ export function TasteTest() {
     );
   }
 
-  if (loading || (!session && !error)) {
+  // Only show loading if we don't have session data yet. Don't gate behind
+  // refetch-in-background flags once a session is loaded.
+  if (!session && !error && loading) {
     return (
       <div className="h-full flex items-center justify-center text-sm text-fg-muted">
         {sessionId ? "Loading session…" : "Creating session…"}
@@ -429,19 +431,64 @@ export function TasteTest() {
         {/* Reviewer or empty state */}
         <div className="flex-1 min-h-0 flex flex-col">
           <div className="flex-1 min-h-0">
-            {activeHash && activeStratumState ? (
-              <Reviewer
-                hash={activeHash}
-                stratumName={activeStratumState.name}
-                pipeline={activePipeline}
-                output_dir={outputDir}
-                existingApproval={findApproval(activeStratumState, activeHash)}
-                onDecision={patch}
-                onAdvance={advance}
-                onNext={goNextDoc}
-                onPrev={goPrevDoc}
-              />
-            ) : (
+            {activeHash && activeStratumState ? (() => {
+              // Gate reviewer behind convert status — don't try to load
+              // /docs/{hash}/md until convert has landed.
+              const activeEntry = activeStratumSamples.find((e) => e.hash === activeHash);
+              const status = activeEntry?.convertStatus ?? "pending";
+              if (status === "converting" || status === "pending") {
+                return (
+                  <div className="h-full flex items-center justify-center text-sm text-fg-muted">
+                    <div className="text-center space-y-2">
+                      <div>Converting document…</div>
+                      <div className="text-xs font-mono break-all max-w-md">
+                        {activeEntry?.source_path}
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+              if (status === "error") {
+                return (
+                  <div className="h-full flex items-center justify-center p-6">
+                    <div className="max-w-md text-center space-y-2">
+                      <div className="text-sm text-danger-fg">Convert failed</div>
+                      <div className="text-xs text-fg-muted font-mono break-all">
+                        {activeEntry?.convertError ?? "unknown error"}
+                      </div>
+                      <div className="flex items-center justify-center gap-2 pt-2">
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            if (activeEntry) {
+                              convertDoc(activeEntry, activeStratumState.name, activePipeline);
+                            }
+                          }}
+                        >
+                          Retry convert
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={advance}>
+                          Skip this doc
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <Reviewer
+                  hash={activeHash}
+                  stratumName={activeStratumState.name}
+                  pipeline={activePipeline}
+                  output_dir={outputDir}
+                  existingApproval={findApproval(activeStratumState, activeHash)}
+                  onDecision={patch}
+                  onAdvance={advance}
+                  onNext={goNextDoc}
+                  onPrev={goPrevDoc}
+                />
+              );
+            })() : (
               <div className="h-full flex flex-col">
                 <SampleGrid
                   samples={samplesWithApproval}

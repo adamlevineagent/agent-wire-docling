@@ -3,16 +3,19 @@
 Implements per contracts/openapi.yaml:
   - POST /scan
   - POST /strata/sample
+  - GET  /fs/list          (added post-wave for folder-picker UX)
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import uuid
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .db import connect
@@ -20,6 +23,59 @@ from .sampling import DocRow, default_seed, pick_sample
 from .scanner import ScanError, scan_folder
 
 router = APIRouter(tags=["scan"])
+
+
+# ─── Filesystem browsing (for folder-picker UX) ─────────────────────────────
+
+
+class FsEntry(BaseModel):
+    name: str
+    path: str
+    kind: str  # "dir" — we only surface directories; files are counted separately
+
+
+class FsListResult(BaseModel):
+    path: str
+    parent: str | None
+    entries: list[FsEntry]
+    file_count: int  # count of non-dir children (hint for the UI)
+
+
+@router.get("/fs/list", response_model=FsListResult)
+def fs_list(path: str | None = Query(default=None)) -> FsListResult:
+    """List directories under an absolute path.
+
+    - `path` defaults to user $HOME when not provided.
+    - Only directories are listed; files are counted for UI hinting.
+    - Hidden entries (starting with ".") are skipped unless the path itself is a dotdir.
+    - `..` segments in input are rejected.
+    """
+    raw = path or os.path.expanduser("~")
+    if ".." in Path(raw).parts:
+        raise HTTPException(status_code=400, detail="relative segments not allowed")
+    p = Path(raw).expanduser().resolve()
+    if not p.exists() or not p.is_dir():
+        raise HTTPException(status_code=404, detail=f"not a directory: {p}")
+
+    entries: list[FsEntry] = []
+    file_count = 0
+    try:
+        for child in sorted(p.iterdir(), key=lambda c: c.name.lower()):
+            if child.name.startswith(".") and not p.name.startswith("."):
+                continue
+            try:
+                if child.is_dir():
+                    entries.append(FsEntry(name=child.name, path=str(child), kind="dir"))
+                else:
+                    file_count += 1
+            except OSError:
+                # broken symlink, permission denied on stat — skip silently
+                continue
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
+
+    parent = str(p.parent) if p.parent != p else None
+    return FsListResult(path=str(p), parent=parent, entries=entries, file_count=file_count)
 
 
 # ─── Pydantic request/response models (shapes match openapi.yaml) ───────────

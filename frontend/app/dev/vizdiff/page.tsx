@@ -53,8 +53,7 @@ export default function DevVizDiffPage() {
           const conv = await api.convert({
             source_path: sourcePath,
             output_dir: outputDir,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            pipeline: pipeline as any,
+            pipeline,
           });
           hash = conv.source_sha256;
           if (cancelled) return;

@@ -77,22 +77,28 @@ export interface SourceRenderer {
 // ─────────────────────────────────────────────────────────────────────────────
 // Pipeline params (mirrors openapi.yaml PipelineParams)
 
+/**
+ * Sub-object fields are `required` in the codegen'd PipelineParams because
+ * the OpenAPI schema supplies defaults. We mirror that here so the hand-
+ * written contract stays byte-identical to the codegen'd components.schemas
+ * shape — callers can pass this directly to api.convert without casts.
+ */
 export interface PipelineParams {
   ocr?: {
-    enabled?: boolean;
-    engine?: "tesseract" | "rapidocr";
+    enabled: boolean;
+    engine: "tesseract" | "rapidocr";
   };
   vlm?: {
-    enabled?: boolean;
-    model?: string;
+    enabled: boolean;
+    model: string;
   };
   tables?: {
-    enabled?: boolean;
+    enabled: boolean;
   };
   enrichments?: {
-    formulas?: boolean;
-    code?: boolean;
-    charts?: boolean;
+    formulas: boolean;
+    code: boolean;
+    charts: boolean;
   };
 }
 

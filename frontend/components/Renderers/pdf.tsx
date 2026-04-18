@@ -348,16 +348,24 @@ export class PdfRenderer implements SourceRenderer {
 
     const anchors = this.opts.anchorsProvider?.() ?? [];
     const onPage = anchors.filter((a) => a.page === page);
+    // Prefer the smallest-area anchor that contains the click so nested
+    // table cells win over their enclosing table/group bbox.
     let hit: Anchor | null = null;
+    let hitArea = Number.POSITIVE_INFINITY;
     for (const a of onPage) {
       const tl = bboxToTopLeft(a.bbox, pageHeightPts);
+      const w = tl.w;
+      const h = Math.abs(tl.h);
       const x0 = tl.x;
       const y0 = tl.y;
-      const x1 = tl.x + tl.w;
-      const y1 = tl.y + Math.abs(tl.h);
+      const x1 = tl.x + w;
+      const y1 = tl.y + h;
       if (xPdf >= x0 && xPdf <= x1 && yPdfTopLeft >= y0 && yPdfTopLeft <= y1) {
-        hit = a;
-        break;
+        const area = Math.max(1, w * h);
+        if (area < hitArea) {
+          hit = a;
+          hitArea = area;
+        }
       }
     }
     if (hit) {

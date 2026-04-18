@@ -86,14 +86,14 @@ async def health() -> Health:
     )
 
 
-# Routers added in Wave 1:
-# from backend.conversion.router import router as conversion_router
-# from backend.stratification.router import router as scan_router
-# from backend.jobs.router import router as jobs_router
-#
-# app.include_router(conversion_router)
-# app.include_router(scan_router)
-# app.include_router(jobs_router)
+# Wave 1 routers — each module owns its own router.py. Agents fill in endpoints.
+from backend.conversion.router import router as conversion_router  # noqa: E402
+from backend.stratification.router import router as scan_router  # noqa: E402
+from backend.jobs.router import router as jobs_router  # noqa: E402
+
+app.include_router(conversion_router)
+app.include_router(scan_router)
+app.include_router(jobs_router)
 
 
 if __name__ == "__main__":

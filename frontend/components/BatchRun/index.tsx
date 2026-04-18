@@ -21,7 +21,7 @@ import { api, ApiError } from "../../lib/api-client";
 import { Button } from "../ui/button";
 import { useAppState } from "../shell/app-state";
 import { PreLaunch } from "./PreLaunch";
-import { LiveProgress } from "./LiveProgress";
+import { Watch } from "./Watch";
 import { PostRun } from "./PostRun";
 import { PostRunTriage } from "./PostRunTriage";
 import { ExportDropdown } from "./ExportDropdown";
@@ -114,11 +114,11 @@ export function BatchRun() {
   if (!tasteSessionId) {
     return (
       <EmptyState
-        title="Approve at least one stratum in Taste before running a batch."
+        title="Point at a folder on the Scan stage to start."
         detail={
           scan
-            ? "Head to the Taste stage, sample docs from each stratum, and lock the strata whose pipelines are ready."
-            : "Scan a folder first."
+            ? "Back on Scan, click Start converting to kick off the job. Preview first is optional."
+            : "No folder scanned yet — head to Scan."
         }
       />
     );
@@ -163,7 +163,7 @@ export function BatchRun() {
   if (jobId && !finalJob) {
     return (
       <>
-        <LiveProgress
+        <Watch
           jobId={jobId}
           onJobFinal={handleJobFinal}
           onRequestExport={() => setExportOpen(true)}

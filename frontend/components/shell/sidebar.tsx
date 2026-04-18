@@ -5,12 +5,17 @@ import { cn } from "../../lib/cn";
 import { Dot } from "../ui/dot";
 import { Kbd } from "../ui/kbd";
 
-type StageDef = { id: Stage; label: string; sub: string };
+type StageDef = {
+  id: Stage;
+  label: string;
+  sub: string;
+  optional?: boolean;
+};
 
 const STAGES: StageDef[] = [
   { id: "scan", label: "Scan", sub: "find & group" },
-  { id: "taste", label: "Taste test", sub: "verify quality" },
-  { id: "batch", label: "Batch run", sub: "convert all" },
+  { id: "taste", label: "Preview", sub: "verify quality", optional: true },
+  { id: "batch", label: "Convert", sub: "run & triage" },
 ];
 
 export function Sidebar() {
@@ -55,6 +60,7 @@ export function Sidebar() {
         {STAGES.map((s, i) => {
           const isActive = s.id === stage;
           const isDone = i < idx;
+          const isOptional = !!s.optional;
           return (
             <button
               key={s.id}
@@ -64,9 +70,11 @@ export function Sidebar() {
                 "border-l-2 cursor-pointer transition-colors",
                 isActive
                   ? "border-l-cyan bg-[linear-gradient(90deg,var(--cyan-soft),transparent_60%)] text-fg-primary"
-                  : "border-l-transparent text-fg-secondary hover:bg-surface-2",
+                  : isOptional
+                    ? "border-l-transparent text-fg-muted hover:bg-surface-2 hover:text-fg-secondary"
+                    : "border-l-transparent text-fg-secondary hover:bg-surface-2",
               )}
-              title={`${s.label}`}
+              title={isOptional ? `${s.label} (optional)` : s.label}
             >
               <span className="mono text-[10px] w-3 text-fg-disabled">
                 {isDone ? (
@@ -76,10 +84,26 @@ export function Sidebar() {
                 )}
               </span>
               <div className="flex-1 min-w-0">
-                <div className={cn("leading-tight", isActive && "font-semibold text-fg-primary")}>
-                  {s.label}
+                <div
+                  className={cn(
+                    "leading-tight flex items-center gap-1.5",
+                    isActive && "font-semibold text-fg-primary",
+                    isOptional && !isActive && "text-fg-muted",
+                  )}
+                >
+                  <span>{s.label}</span>
+                  {isOptional && (
+                    <span
+                      className="mono text-[9px] px-1 py-px rounded border border-border-subtle text-fg-disabled leading-none"
+                      style={{ letterSpacing: 0.3 }}
+                    >
+                      optional
+                    </span>
+                  )}
                 </div>
-                <div className="text-fg-muted text-[10.5px] leading-tight">{s.sub}</div>
+                <div className="text-fg-muted text-[10.5px] leading-tight">
+                  {s.sub}
+                </div>
               </div>
               {isActive && <Dot tone="cyan" />}
               {isDone && <Dot tone="ok" />}

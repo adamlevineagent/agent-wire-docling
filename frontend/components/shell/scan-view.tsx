@@ -7,7 +7,6 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Dot } from "../ui/dot";
-import { Kbd } from "../ui/kbd";
 import { PrismGlyph } from "./prism-glyph";
 import { FolderEntry } from "./folder-entry";
 import { FolderPicker } from "./folder-picker";
@@ -65,8 +64,8 @@ export function ScanView() {
       sessionStore.setOutputDir(session.output_dir);
       toast.push({
         kind: "success",
-        title: "Skipped taste",
-        detail: `All ${session.strata.length} strata locked at default pipelines. Review the plan on Batch.`,
+        title: "Starting conversion",
+        detail: `All ${session.strata.length} groups locked at default pipelines.`,
       });
       setStage("batch");
     },
@@ -151,20 +150,22 @@ export function ScanView() {
         >
           {rescan.isPending ? "Scanning…" : "Change folder…"}
         </Button>
-        <Button variant="ghost" size="sm">
-          Edit inclusions
-        </Button>
         <Button
           variant="ghost"
           size="sm"
+          onClick={() => setStage("taste")}
+          title="Sample a few docs and verify quality before converting"
+        >
+          Preview a few first
+        </Button>
+        <Button
+          variant="primary"
+          size="sm"
           onClick={() => skipToBatch.mutate()}
           disabled={skipToBatch.isPending}
-          title="Lock all strata at defaults and go straight to Batch"
+          title="Lock all groups at defaults and start converting"
         >
-          {skipToBatch.isPending ? "Preparing…" : "Skip to batch →"}
-        </Button>
-        <Button variant="primary" size="sm" onClick={() => setStage("taste")}>
-          Continue to taste <Kbd>↵</Kbd>
+          {skipToBatch.isPending ? "Preparing…" : "Start converting →"}
         </Button>
       </div>
 
@@ -188,8 +189,8 @@ export function ScanView() {
             {strata.length === 1 ? "" : "s"}.
           </h1>
           <div className="text-sm text-fg-muted mt-1">
-            Each group gets its own conversion settings. You&apos;ll tune them
-            one by one in the next step.
+            Each group gets its own conversion settings. Start converting with
+            sensible defaults, or preview a few first to tune.
           </div>
         </div>
 

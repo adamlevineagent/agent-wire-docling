@@ -137,7 +137,9 @@ export function FolderEntry() {
   function submit() {
     const v = value.trim();
     if (!v) {
-      setClientError("Path is required");
+      // Empty path → open the picker instead of erroring.
+      setClientError(null);
+      setPickerOpen(true);
       return;
     }
     if (!looksAbsolute(v)) {

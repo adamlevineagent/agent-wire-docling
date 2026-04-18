@@ -1,8 +1,10 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { useAppState } from "./app-state";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { api, type FiletreeNode } from "../../lib/api-client";
 
 export function ScanView() {
   const { scan, folder, setStage } = useAppState();
@@ -87,6 +89,8 @@ export function ScanView() {
         </div>
       )}
 
+      <FilemapTreePanel root={scan.folder} />
+
       {scan.skipped && scan.skipped.length > 0 && (
         <details className="pt-3 border-t border-border-default">
           <summary className="text-xs text-fg-muted cursor-pointer">
@@ -101,6 +105,63 @@ export function ScanView() {
           </ul>
         </details>
       )}
+    </div>
+  );
+}
+
+function FilemapTreePanel({ root }: { root: string }) {
+  const q = useQuery<FiletreeNode>({
+    queryKey: ["filetree", root],
+    queryFn: () => api.filetree(root),
+    enabled: !!root,
+  });
+  if (q.isLoading) {
+    return <div className="text-xs text-fg-muted">Loading folder tree…</div>;
+  }
+  if (q.error || !q.data) return null;
+  return (
+    <details className="pt-3 border-t border-border-default" open>
+      <summary className="text-xs text-fg-muted cursor-pointer">
+        Folder tree · {q.data.counts?.included ?? 0}/{q.data.counts?.total ?? 0} included
+      </summary>
+      <div className="mt-2 font-mono text-xs space-y-0.5">
+        <FilemapTreeNode node={q.data} depth={0} />
+      </div>
+    </details>
+  );
+}
+
+function FilemapTreeNode({ node, depth }: { node: FiletreeNode; depth: number }) {
+  const name =
+    node.folder_relative && node.folder_relative !== ""
+      ? node.folder_relative.split("/").pop()
+      : node.path?.split("/").pop() || "/";
+  const counts = node.counts || {};
+  const c = {
+    included: counts.included ?? 0,
+    pending: counts.pending ?? 0,
+    excluded: counts.excluded ?? 0,
+    total: counts.total ?? 0,
+  };
+  return (
+    <div>
+      <div
+        className="flex items-center gap-2 py-0.5"
+        style={{ paddingLeft: depth * 12 }}
+      >
+        <span className="text-fg-primary truncate">{name}/</span>
+        <Badge tone="info">
+          {c.included}/{c.total}
+        </Badge>
+        {c.excluded > 0 && <Badge tone="warning">{c.excluded} excluded</Badge>}
+      </div>
+      {(node.children || []).map((child) => (
+        <FilemapTreeNode
+          key={child.path}
+          node={child}
+          depth={depth + 1}
+        />
+      ))}
     </div>
   );
 }

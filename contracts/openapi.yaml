@@ -70,6 +70,101 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/SampleResult' }
 
+  /filemap:
+    get:
+      tags: [scan]
+      summary: Read a folder's filemap (Level B)
+      parameters:
+        - in: query
+          name: folder
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Filemap dict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Filemap' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [scan]
+      summary: Merge user-owned fields into a folder's filemap
+      parameters:
+        - in: query
+          name: folder
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FilemapPatchRequest' }
+      responses:
+        '200':
+          description: Updated filemap
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Filemap' }
+
+  /filetree:
+    get:
+      tags: [scan]
+      summary: Recursive filetree view for UI rendering
+      parameters:
+        - in: query
+          name: root
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Filetree node
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FiletreeNode' }
+
+  /triage:
+    get:
+      tags: [batch]
+      summary: Read the triage rollup for a batch output directory
+      parameters:
+        - in: query
+          name: output_dir
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Triage doc
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Triage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /triage/retry:
+    post:
+      tags: [batch]
+      summary: Apply user edits to triage.yaml — retry / exclude
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [output_dir]
+              properties:
+                output_dir: { type: string }
+      responses:
+        '200':
+          description: Retry summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  retried: { type: integer }
+                  succeeded: { type: integer }
+                  still_failed: { type: integer }
+                  excluded: { type: integer }
+
   /convert:
     post:
       tags: [convert]
@@ -512,20 +607,97 @@ components:
 
     BatchRequest:
       type: object
-      required: [scan_id, output_dir, stratum_pipelines]
+      required: [output_dir]
+      description: |
+        Two dispatch modes:
+          - Filemap mode (Level B): provide `root`; optional
+            `pipeline_by_content_type` / `pipeline_by_stratum`.
+          - Legacy stratum mode: provide `scan_id` + `stratum_pipelines`.
       properties:
-        scan_id: { type: string }
         output_dir: { type: string }
         concurrency: { type: integer, default: 2 }
+        root: { type: string, nullable: true, description: "Filemap mode: walks .understanding/folder.yaml under this root" }
+        pipeline_by_content_type:
+          type: object
+          nullable: true
+          additionalProperties: { $ref: '#/components/schemas/PipelineParams' }
+        pipeline_by_stratum:
+          type: object
+          nullable: true
+          additionalProperties: { $ref: '#/components/schemas/PipelineParams' }
+        scan_id: { type: string, nullable: true }
         stratum_pipelines:
           type: array
-          description: 'Per-stratum pipeline assignments from the locked taste session'
+          nullable: true
+          description: 'Legacy per-stratum pipeline assignments'
           items:
             type: object
             required: [stratum, pipeline]
             properties:
               stratum: { type: string }
               pipeline: { $ref: '#/components/schemas/PipelineParams' }
+
+    Filemap:
+      type: object
+      description: .understanding/folder.yaml parsed as JSON
+      additionalProperties: true
+
+    FilemapFileUpdate:
+      type: object
+      required: [path]
+      properties:
+        path: { type: string }
+        user_included: { type: boolean, nullable: true }
+        user_content_type: { type: string, nullable: true }
+        user_notes: { type: string, nullable: true }
+
+    FilemapPatchRequest:
+      type: object
+      properties:
+        files:
+          type: array
+          items: { $ref: '#/components/schemas/FilemapFileUpdate' }
+        defaults:
+          type: object
+          nullable: true
+          additionalProperties: true
+
+    FiletreeNode:
+      type: object
+      properties:
+        path: { type: string }
+        folder_relative: { type: string }
+        counts:
+          type: object
+          properties:
+            included: { type: integer }
+            pending: { type: integer }
+            excluded: { type: integer }
+            total: { type: integer }
+        filemap: { type: boolean }
+        children:
+          type: array
+          items: { $ref: '#/components/schemas/FiletreeNode' }
+
+    Triage:
+      type: object
+      properties:
+        batch_id: { type: string }
+        completed_at: { type: string }
+        output_dir: { type: string }
+        docs_succeeded: { type: integer }
+        docs_failed: { type: integer }
+        by_reason:
+          type: object
+          additionalProperties: { type: integer }
+        by_content_type:
+          type: object
+          additionalProperties: { type: integer }
+        failures:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
 
     Job:
       type: object

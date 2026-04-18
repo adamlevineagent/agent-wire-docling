@@ -353,3 +353,100 @@ def scan_folder(
         )
 
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Filemap emission — Level B
+
+import datetime as dt  # noqa: E402
+
+
+def _iso_now() -> str:
+    return dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _iso_mtime(path: Path) -> str | None:
+    try:
+        ts = path.stat().st_mtime
+    except OSError:
+        return None
+    return dt.datetime.fromtimestamp(ts, dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def emit_filemaps_for_scan(scan_out: ScanOutput, scan_id: str, *, root: Path) -> int:
+    """Write/merge `.understanding/folder.yaml` in every folder under root.
+
+    Groups `scan_out.docs` + `scan_out.skipped` by parent folder, merges with
+    any existing filemap (preserves user + post-build fields), writes atomically.
+    Returns the count of filemaps written.
+    """
+    from backend.stratification import filemap as fm
+
+    now = _iso_now()
+    root = root.resolve()
+    by_folder: dict[Path, list[dict[str, Any]]] = {}
+
+    for d in scan_out.docs:
+        p = Path(d.source_path)
+        entry: dict[str, Any] = {
+            "path": p.name,
+            "sha256": d.source_sha256,
+            "size_bytes": d.size_bytes,
+            "mtime": _iso_mtime(p),
+            "detected_content_type": d.source_format,
+            "detected_stratum": d.stratum,
+            "scanner_suggestion": "include",
+            "exclusion_reason": None,
+        }
+        by_folder.setdefault(p.parent, []).append(entry)
+
+    for s in scan_out.skipped:
+        p = Path(s.path)
+        reason = s.reason
+        if reason.startswith("tier3_"):
+            sugg = "exclude_by_type"
+        elif reason == "unrecognized_format":
+            sugg = "unsupported"
+        elif reason == "unreadable":
+            sugg = "failed_extraction"
+        elif reason == "null_byte_in_name":
+            sugg = "exclude_by_pattern"
+        else:
+            sugg = "unsupported"
+        try:
+            size: int | None = p.stat().st_size
+        except OSError:
+            size = None
+        entry = {
+            "path": p.name,
+            "sha256": None,
+            "size_bytes": size,
+            "mtime": _iso_mtime(p),
+            "detected_content_type": None,
+            "detected_stratum": None,
+            "scanner_suggestion": sugg,
+            "exclusion_reason": reason,
+        }
+        by_folder.setdefault(p.parent, []).append(entry)
+
+    # Ensure every folder under root gets a filemap (even empty/subfolder-only).
+    for dirpath, _dirs, _files in os.walk(root):
+        folder = Path(dirpath)
+        if folder.name == fm.UNDERSTANDING_DIR:
+            continue
+        by_folder.setdefault(folder, [])
+
+    written = 0
+    for folder, files in by_folder.items():
+        if folder.name == fm.UNDERSTANDING_DIR:
+            continue
+        scanner_data = {
+            "folder": str(folder),
+            "scan_id": scan_id,
+            "scanned_at": now,
+            "files": files,
+        }
+        merged = fm.merge_filemap(folder, scanner_data)
+        fm.write_filemap(folder, merged)
+        written += 1
+    return written

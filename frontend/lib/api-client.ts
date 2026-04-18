@@ -28,6 +28,10 @@ export type TasteSessionCreate = Schemas["TasteSessionCreate"];
 export type TasteSession = Schemas["TasteSession"];
 export type TasteSessionPatch = Schemas["TasteSessionPatch"];
 export type ExportRequest = Schemas["ExportRequest"];
+export type Filemap = Schemas["Filemap"];
+export type FilemapPatchRequest = Schemas["FilemapPatchRequest"];
+export type FiletreeNode = Schemas["FiletreeNode"];
+export type Triage = Schemas["Triage"];
 export type ApiError_ = Schemas["Error"];
 
 export class ApiError extends Error {
@@ -133,6 +137,24 @@ export const api = {
   export: (req: ExportRequest) =>
     request<Job>("/export", { method: "POST", body: JSON.stringify(req) }),
   exportStatus: (id: string) => request<Job>(`/exports/${id}`),
+
+  // ── Level B: filemap / filetree / triage ─────────────────────────────────
+  filemap: (folder: string) =>
+    request<Filemap>(`/filemap?folder=${encodeURIComponent(folder)}`),
+  patchFilemap: (folder: string, req: FilemapPatchRequest) =>
+    request<Filemap>(`/filemap?folder=${encodeURIComponent(folder)}`, {
+      method: "PATCH",
+      body: JSON.stringify(req),
+    }),
+  filetree: (root: string) =>
+    request<FiletreeNode>(`/filetree?root=${encodeURIComponent(root)}`),
+  triage: (outputDir: string) =>
+    request<Triage>(`/triage?output_dir=${encodeURIComponent(outputDir)}`),
+  retryTriage: (outputDir: string) =>
+    request<{ retried: number; succeeded: number; still_failed: number; excluded: number }>(
+      "/triage/retry",
+      { method: "POST", body: JSON.stringify({ output_dir: outputDir }) },
+    ),
 };
 
 export type Api = typeof api;

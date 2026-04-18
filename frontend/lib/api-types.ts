@@ -121,6 +121,195 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/filemap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a folder's filemap (Level B) */
+        get: {
+            parameters: {
+                query: {
+                    folder: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Filemap dict */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Filemap"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Merge user-owned fields into a folder's filemap */
+        patch: {
+            parameters: {
+                query: {
+                    folder: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["FilemapPatchRequest"];
+                };
+            };
+            responses: {
+                /** @description Updated filemap */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Filemap"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/filetree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recursive filetree view for UI rendering */
+        get: {
+            parameters: {
+                query: {
+                    root: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Filetree node */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FiletreeNode"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/triage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the triage rollup for a batch output directory */
+        get: {
+            parameters: {
+                query: {
+                    output_dir: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Triage doc */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Triage"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/triage/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply user edits to triage.yaml — retry / exclude */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        output_dir: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Retry summary */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            retried?: number;
+                            succeeded?: number;
+                            still_failed?: number;
+                            excluded?: number;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/convert": {
         parameters: {
             query?: never;
@@ -886,15 +1075,73 @@ export interface components {
             output_dir?: string;
             pipeline?: components["schemas"]["PipelineParams"];
         };
+        /**
+         * @description Two dispatch modes:
+         *       - Filemap mode (Level B): provide `root`; optional
+         *         `pipeline_by_content_type` / `pipeline_by_stratum`.
+         *       - Legacy stratum mode: provide `scan_id` + `stratum_pipelines`.
+         */
         BatchRequest: {
-            scan_id: string;
             output_dir: string;
             /** @default 2 */
             concurrency: number;
-            /** @description Per-stratum pipeline assignments from the locked taste session */
-            stratum_pipelines: {
+            /** @description Filemap mode: walks .understanding/folder.yaml under this root */
+            root?: string | null;
+            pipeline_by_content_type?: {
+                [key: string]: components["schemas"]["PipelineParams"];
+            } | null;
+            pipeline_by_stratum?: {
+                [key: string]: components["schemas"]["PipelineParams"];
+            } | null;
+            scan_id?: string | null;
+            /** @description Legacy per-stratum pipeline assignments */
+            stratum_pipelines?: {
                 stratum: string;
                 pipeline: components["schemas"]["PipelineParams"];
+            }[] | null;
+        };
+        /** @description .understanding/folder.yaml parsed as JSON */
+        Filemap: {
+            [key: string]: unknown;
+        };
+        FilemapFileUpdate: {
+            path: string;
+            user_included?: boolean | null;
+            user_content_type?: string | null;
+            user_notes?: string | null;
+        };
+        FilemapPatchRequest: {
+            files?: components["schemas"]["FilemapFileUpdate"][];
+            defaults?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        FiletreeNode: {
+            path?: string;
+            folder_relative?: string;
+            counts?: {
+                included?: number;
+                pending?: number;
+                excluded?: number;
+                total?: number;
+            };
+            filemap?: boolean;
+            children?: components["schemas"]["FiletreeNode"][];
+        };
+        Triage: {
+            batch_id?: string;
+            completed_at?: string;
+            output_dir?: string;
+            docs_succeeded?: number;
+            docs_failed?: number;
+            by_reason?: {
+                [key: string]: number;
+            };
+            by_content_type?: {
+                [key: string]: number;
+            };
+            failures?: {
+                [key: string]: unknown;
             }[];
         };
         Job: {

@@ -177,39 +177,61 @@ def convert(
 
 @app.command()
 def batch(
-    scan_id: str,
     output_dir: str,
+    root: Annotated[str | None, typer.Option("--root", help="Filemap root; walks .understanding/folder.yaml under it")] = None,
+    scan_id: Annotated[str | None, typer.Option("--scan-id", help="Legacy scan_id mode")] = None,
     stratum_pipeline: Annotated[
         list[str] | None,
-        typer.Option(
-            "--stratum",
-            help="Per-stratum pipeline, 'name=default' or 'name=/path/to/pipeline.json'",
-        ),
+        typer.Option("--stratum", help="Legacy: per-stratum pipeline 'name=default|path.json'"),
+    ] = None,
+    pipeline_by_content_type: Annotated[
+        list[str] | None,
+        typer.Option("--pipeline-by-content-type", help="'pdf=path.json' (repeatable)"),
+    ] = None,
+    pipeline_by_stratum: Annotated[
+        list[str] | None,
+        typer.Option("--pipeline-by-stratum", help="'pdf-native-1-10=path.json' (repeatable)"),
     ] = None,
     concurrency: int = 2,
     wait: bool = typer.Option(True, help="Poll job until complete"),
     url: str = DEFAULT_URL,
 ) -> None:
-    """POST /batch — start a batch run against locked stratum pipelines."""
-    if stratum_pipeline is None:
-        stratum_pipeline = []
+    """POST /batch — filemap mode (--root) or legacy stratum mode (--scan-id)."""
     output_dir = str(Path(output_dir).expanduser().resolve())
-    sp = []
-    for spec in stratum_pipeline:
-        if "=" not in spec:
-            _die(f"--stratum expected 'name=default|path.json', got: {spec}")
-        name, rhs = spec.split("=", 1)
-        pipe = {} if rhs == "default" else _load_json(rhs)
-        sp.append({"stratum": name.strip(), "pipeline": pipe})
-    if not sp:
-        _die("provide at least one --stratum NAME=default|path.json")
+    payload: dict[str, Any] = {"output_dir": output_dir, "concurrency": concurrency}
 
-    payload = {
-        "scan_id": scan_id,
-        "output_dir": output_dir,
-        "concurrency": concurrency,
-        "stratum_pipelines": sp,
-    }
+    if root:
+        payload["root"] = str(Path(root).expanduser().resolve())
+        if pipeline_by_content_type:
+            d = {}
+            for spec in pipeline_by_content_type:
+                if "=" not in spec:
+                    _die(f"--pipeline-by-content-type expected 'ct=path.json', got: {spec}")
+                k, v = spec.split("=", 1)
+                d[k.strip()] = {} if v == "default" else _load_json(v)
+            payload["pipeline_by_content_type"] = d
+        if pipeline_by_stratum:
+            d = {}
+            for spec in pipeline_by_stratum:
+                if "=" not in spec:
+                    _die(f"--pipeline-by-stratum expected 'name=path.json', got: {spec}")
+                k, v = spec.split("=", 1)
+                d[k.strip()] = {} if v == "default" else _load_json(v)
+            payload["pipeline_by_stratum"] = d
+    else:
+        if not scan_id:
+            _die("provide either --root (filemap mode) or --scan-id (legacy mode)")
+        sp = []
+        for spec in stratum_pipeline or []:
+            if "=" not in spec:
+                _die(f"--stratum expected 'name=default|path.json', got: {spec}")
+            name, rhs = spec.split("=", 1)
+            pipe = {} if rhs == "default" else _load_json(rhs)
+            sp.append({"stratum": name.strip(), "pipeline": pipe})
+        if not sp:
+            _die("legacy mode: provide at least one --stratum NAME=default|path.json")
+        payload["scan_id"] = scan_id
+        payload["stratum_pipelines"] = sp
     with _client(url, timeout=10) as c:
         job = _api_or_die(c.post("/batch", json=payload))
     typer.echo(f"job_id: {job['id']}  status: {job['status']}  docs_total: {job['progress'].get('docs_total')}")
@@ -357,6 +379,41 @@ def taste_pipeline(
         _print_json(_api_or_die(c.patch(f"/taste_sessions/{session_id}", json=patch)))
 
 
+# ─── Filemap / filetree / triage (Level B) ───────────────────────────────
+
+
+@app.command()
+def filemap(folder: str, url: str = DEFAULT_URL) -> None:
+    """GET /filemap?folder=..."""
+    folder = str(Path(folder).expanduser().resolve())
+    with _client(url) as c:
+        _print_json(_api_or_die(c.get("/filemap", params={"folder": folder})))
+
+
+@app.command()
+def filetree(root: str, url: str = DEFAULT_URL) -> None:
+    """GET /filetree?root=..."""
+    root = str(Path(root).expanduser().resolve())
+    with _client(url) as c:
+        _print_json(_api_or_die(c.get("/filetree", params={"root": root})))
+
+
+@app.command()
+def triage(output_dir: str, url: str = DEFAULT_URL) -> None:
+    """GET /triage?output_dir=..."""
+    output_dir = str(Path(output_dir).expanduser().resolve())
+    with _client(url) as c:
+        _print_json(_api_or_die(c.get("/triage", params={"output_dir": output_dir})))
+
+
+@app.command("retry-triage")
+def retry_triage(output_dir: str, url: str = DEFAULT_URL) -> None:
+    """POST /triage/retry — applies user edits to triage.yaml."""
+    output_dir = str(Path(output_dir).expanduser().resolve())
+    with _client(url, timeout=600) as c:
+        _print_json(_api_or_die(c.post("/triage/retry", json={"output_dir": output_dir})))
+
+
 # ─── End-to-end convenience ──────────────────────────────────────────────
 
 
@@ -366,49 +423,31 @@ def end_to_end(
     output_dir: Annotated[str | None, typer.Option("--output-dir")] = None,
     url: str = DEFAULT_URL,
 ) -> None:
-    """Run scan → taste session → lock all strata → batch → manifest → done."""
+    """Level B: scan (emits filemaps) → batch from filemaps → manifest."""
     folder = str(Path(folder).expanduser().resolve())
     output_dir = str(Path(output_dir or f"{folder}/.docling-out").expanduser().resolve())
 
     typer.echo(f"▸ scan {folder}")
     with _client(url, timeout=120) as c:
         scan_res = _api_or_die(c.post("/scan", json={"folder": folder}))
-    scan_id = scan_res["scan_id"]
     typer.echo(
-        f"  scan_id={scan_id}  files={scan_res['total_files']}  strata={len(scan_res['strata'])}"
+        f"  files={scan_res['total_files']}  strata={len(scan_res['strata'])}  "
+        f"folders_with_filemaps={scan_res.get('folders_with_filemaps', 0)}"
     )
 
-    typer.echo("▸ create taste session")
-    with _client(url) as c:
-        sess = _api_or_die(c.post("/taste_sessions", json={"scan_id": scan_id, "output_dir": output_dir}))
-    sess_id = sess["id"]
-    typer.echo(f"  session_id={sess_id}")
-
-    typer.echo("▸ lock all strata (default pipelines)")
-    with _client(url) as c:
-        for s in sess["strata"]:
-            fresh = _api_or_die(c.get(f"/taste_sessions/{sess_id}"))
-            patch = {
-                "version": fresh.get("version", 0),
-                "lock_stratum": {"stratum": s["name"], "locked": True},
-            }
-            _api_or_die(c.patch(f"/taste_sessions/{sess_id}", json=patch))
-
-    typer.echo("▸ start batch")
+    typer.echo("▸ start batch (filemap mode)")
     with _client(url, timeout=10) as c:
-        sp = [{"stratum": s["name"], "pipeline": {}} for s in sess["strata"]]
         job = _api_or_die(
             c.post(
                 "/batch",
                 json={
-                    "scan_id": scan_id,
+                    "root": folder,
                     "output_dir": output_dir,
                     "concurrency": 2,
-                    "stratum_pipelines": sp,
                 },
             )
         )
-    typer.echo(f"  job_id={job['id']}")
+    typer.echo(f"  job_id={job['id']}  docs_total={job.get('progress', {}).get('docs_total', 0)}")
 
     with _client(url, timeout=10) as c:
         while True:
@@ -424,8 +463,8 @@ def end_to_end(
     typer.echo("▸ manifest")
     with _client(url) as c:
         mf = _api_or_die(c.get("/manifest", params={"output_dir": output_dir}))
-    typer.echo(f"  {len(mf.get('docs', []))} docs in manifest at {output_dir}/manifest.json")
-    typer.echo(f"\ndone. session={sess_id}  output_dir={output_dir}")
+    typer.echo(f"  {len(mf.get('docs', []))} docs in manifest at {output_dir}/manifest.yaml")
+    typer.echo(f"\ndone. output_dir={output_dir}")
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────

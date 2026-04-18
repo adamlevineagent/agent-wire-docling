@@ -1,20 +1,19 @@
-"""Batch worker loop.
+"""Batch worker loop — Level B.
 
-Pull scan_docs matching a stratum→pipeline map, convert each doc via
-Agent A's conversion function, maintain manifest + docs table, respect
-cancellation, retry failures N times.
+Two dispatch modes:
+  1. Filemap mode (new): batch walks `.understanding/folder.yaml` files under a
+     root and converts every `user_included` (or null-but-scanner-include) file,
+     writing output into a mirrored tree under output_dir.
+  2. Legacy stratum mode: scan_id + stratum_pipelines (kept for backward-compat).
 
-Agent A's public call-site contract (agreed in Wave 1):
-
-    await convert_doc(source_path: str, output_dir: str, pipeline: dict) -> dict
-
-Returns a DocMeta-shaped dict. We import lazily to avoid a hard import
-order dep at module load.
+On completion writes `<output_dir>/triage.yaml` and updates per-folder filemap
+`last_build_*` fields.
 """
 
 from __future__ import annotations
 
 import asyncio
+import datetime as _dt
 import hashlib
 import json
 import time
@@ -24,35 +23,292 @@ from typing import Any
 
 from backend import db as _db
 from backend.jobs import queue as q
+from backend.jobs import triage as _triage
 from backend.manifest import append_manifest_entry
+from backend.stratification import filemap as _filemap
 
+# 1 initial + 2 retries = 3 total attempts
 MAX_RETRIES = 3
 
 
 def pipeline_hash(pipeline: dict[str, Any]) -> str:
-    """Deterministic hash of pipeline params. Matches what Agent A should use."""
     payload = json.dumps(pipeline or {}, sort_keys=True, default=str).encode()
     return hashlib.sha256(payload).hexdigest()[:16]
 
 
-async def _call_convert(source_path: str, output_dir: str, pipeline: dict[str, Any]) -> dict[str, Any]:
-    """Late-bind to Agent A's module. If A hasn't shipped yet, raise a clear error."""
-    try:
-        from backend.conversion import convert as _conv  # type: ignore
-    except ImportError as e:  # pragma: no cover — Wave 1 integration path
-        raise RuntimeError(f"conversion module unavailable: {e}") from e
+def _now_iso() -> str:
+    return _dt.datetime.now(_dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Prefer a top-level async function `convert_doc`; fall back to others.
-    fn = getattr(_conv, "convert_doc", None)
-    if fn is None:
-        # Search module for something obvious
-        raise RuntimeError(
-            "backend.conversion.convert has no convert_doc(source_path, output_dir, pipeline)"
-        )
+
+async def _call_convert_mirrored(
+    source_path: str,
+    output_dir: str,
+    pipeline: dict[str, Any],
+    *,
+    output_root: str | None,
+) -> dict[str, Any]:
+    try:
+        from backend.conversion import convert as _conv
+    except ImportError as e:
+        raise RuntimeError(f"conversion module unavailable: {e}") from e
+    fn: Any = _conv.convert_doc
+    result = fn(
+        source_path, output_dir, pipeline,
+        output_root=output_root, mirrored=True,
+    )
+    if asyncio.iscoroutine(result):
+        result = await result
+    return dict(result) if result is not None else {}
+
+
+async def _call_convert_legacy(
+    source_path: str, output_dir: str, pipeline: dict[str, Any]
+) -> dict[str, Any]:
+    try:
+        from backend.conversion import convert as _conv
+    except ImportError as e:
+        raise RuntimeError(f"conversion module unavailable: {e}") from e
+    fn: Any = _conv.convert_doc
     result = fn(source_path, output_dir, pipeline)
     if asyncio.iscoroutine(result):
         result = await result
     return dict(result) if result is not None else {}
+
+
+# ── Filemap-mode dispatch ───────────────────────────────────────────────────
+
+
+def _pick_pipeline_for(
+    entry: dict[str, Any],
+    pipeline_by_stratum: dict[str, dict[str, Any]],
+    pipeline_by_content_type: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    stratum = entry.get("detected_stratum")
+    if stratum and stratum in pipeline_by_stratum:
+        return pipeline_by_stratum[stratum]
+    ct = entry.get("user_content_type") or entry.get("detected_content_type")
+    if ct and ct in pipeline_by_content_type:
+        return pipeline_by_content_type[ct]
+    return {}
+
+
+async def _process_filemap_doc(
+    job_id: str,
+    output_dir: str,
+    output_root: str,
+    entry: dict[str, Any],
+    pipeline: dict[str, Any],
+    counters: dict[str, int],
+    counters_lock: asyncio.Lock,
+    results: list[dict[str, Any]],
+    results_lock: asyncio.Lock,
+) -> None:
+    source_path = entry["_absolute_path"]
+    folder = entry["_folder"]
+    path_rel = entry.get("path") or Path(source_path).name
+    phash = pipeline_hash(pipeline)
+
+    if q.runner().is_cancelled(job_id):
+        return
+
+    first_attempt = _now_iso()
+    last_err: str | None = None
+    meta: dict[str, Any] | None = None
+    attempt = 0
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        if q.runner().is_cancelled(job_id):
+            last_err = "cancelled"
+            break
+        try:
+            q.log_event(
+                job_id,
+                {"event": "convert_start", "path": source_path, "attempt": attempt},
+            )
+            m = await _call_convert_mirrored(
+                source_path, output_dir, pipeline, output_root=output_root
+            )
+            if m.get("status") == "ok":
+                meta = m
+                last_err = None
+                break
+            # Docling returned but with an error string
+            last_err = m.get("error") or "unknown_error"
+            meta = m
+            q.log_event(
+                job_id,
+                {"event": "convert_fail", "path": source_path,
+                 "attempt": attempt, "error": last_err},
+            )
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+            q.log_event(
+                job_id,
+                {"event": "convert_fail", "path": source_path, "attempt": attempt,
+                 "error": last_err, "traceback": traceback.format_exc()[-2000:]},
+            )
+            await asyncio.sleep(min(2**attempt, 5))
+
+    last_attempt = _now_iso()
+    status = "complete" if (meta and not last_err) else "error"
+    output_path = meta.get("output_path") if meta else None
+
+    # Filemap post-build writeback
+    try:
+        _filemap.record_build_result(
+            folder, path_rel,
+            pipeline_hash=phash,
+            output_path=output_path,
+            error=last_err,
+        )
+    except Exception as e:
+        q.log_event(job_id, {"event": "filemap_writeback_fail", "error": str(e)})
+
+    # Manifest entry
+    try:
+        manifest_entry = {
+            "source_sha256": (meta or {}).get("source_sha256") or entry.get("sha256") or "",
+            "source_path": source_path,
+            "source_format": entry.get("detected_content_type"),
+            "status": "complete" if status == "complete" else "error",
+            "stratum": entry.get("detected_stratum"),
+            "pipeline_hash": phash,
+            "error": last_err,
+            "converted_at": last_attempt,
+            "output_path": output_path,
+        }
+        append_manifest_entry(output_dir, manifest_entry)
+    except Exception as e:
+        q.log_event(job_id, {"event": "manifest_write_fail", "error": str(e)})
+
+    async with results_lock:
+        results.append({
+            "source_path": source_path,
+            "source_sha256": entry.get("sha256"),
+            "detected_content_type": entry.get("detected_content_type"),
+            "detected_stratum": entry.get("detected_stratum"),
+            "pipeline_used": pipeline,
+            "status": status,
+            "error": last_err,
+            "attempt_count": attempt,
+            "first_attempted_at": first_attempt,
+            "last_attempted_at": last_attempt,
+            "filemap_folder": folder,
+        })
+
+    async with counters_lock:
+        if status == "complete":
+            counters["done"] += 1
+        else:
+            counters["failed"] += 1
+        conn = _db.connect()
+        try:
+            q.update_job_status(
+                conn, job_id,
+                docs_done=counters["done"], docs_failed=counters["failed"],
+            )
+            _publish_progress(job_id, conn)
+        finally:
+            conn.close()
+
+
+async def run_batch_from_filemaps(
+    job_id: str,
+    root: str,
+    output_dir: str,
+    pipeline_by_stratum: dict[str, dict[str, Any]],
+    pipeline_by_content_type: dict[str, dict[str, Any]],
+    concurrency: int = 2,
+) -> None:
+    root = str(Path(root).resolve())
+    output_dir = str(Path(output_dir).resolve())
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    q.log_event(job_id, {"event": "batch_start", "root": root, "output_dir": output_dir, "mode": "filemap"})
+
+    try:
+        included = _filemap.collect_included_files(root)
+    except Exception as e:
+        q.log_event(job_id, {"event": "collect_fail", "error": str(e)})
+        included = []
+
+    # Attach pipeline
+    for entry in included:
+        entry["_pipeline"] = _pick_pipeline_for(
+            entry, pipeline_by_stratum, pipeline_by_content_type
+        )
+
+    conn = _db.connect()
+    try:
+        q.update_job_status(
+            conn, job_id,
+            status="running", started_at=q.now_iso(), docs_total=len(included),
+        )
+        _publish_progress(job_id, conn)
+    finally:
+        conn.close()
+
+    counters = {"done": 0, "failed": 0}
+    counters_lock = asyncio.Lock()
+    results: list[dict[str, Any]] = []
+    results_lock = asyncio.Lock()
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def _worker(entry: dict[str, Any]) -> None:
+        async with sem:
+            if q.runner().is_cancelled(job_id):
+                return
+            await _process_filemap_doc(
+                job_id, output_dir, root, entry, entry["_pipeline"],
+                counters, counters_lock, results, results_lock,
+            )
+
+    try:
+        tasks = [asyncio.create_task(_worker(e)) for e in included]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        cancelled = q.runner().is_cancelled(job_id)
+        final_status = "cancelled" if cancelled else "completed"
+
+        # Write triage rollup
+        try:
+            _triage.write_triage(output_dir, job_id, results)
+        except Exception as e:
+            q.log_event(job_id, {"event": "triage_write_fail", "error": str(e)})
+
+        conn = _db.connect()
+        try:
+            q.update_job_status(
+                conn, job_id,
+                status=final_status,
+                completed_at=q.now_iso(),
+                docs_done=counters["done"],
+                docs_failed=counters["failed"],
+            )
+            q.release_all_leases_for_job(conn, job_id)
+            _publish_progress(job_id, conn)
+        finally:
+            conn.close()
+        q.log_event(job_id, {"event": "batch_end", "status": final_status, **counters})
+    except Exception as e:
+        q.log_event(
+            job_id,
+            {"event": "batch_crash", "error": str(e),
+             "traceback": traceback.format_exc()[-2000:]},
+        )
+        conn = _db.connect()
+        try:
+            q.update_job_status(
+                conn, job_id, status="failed", error=str(e),
+                completed_at=q.now_iso(),
+            )
+            q.release_all_leases_for_job(conn, job_id)
+        finally:
+            conn.close()
+    finally:
+        q.runner().cleanup(job_id)
+
+
+# ── Legacy stratum-mode (backward compat) ───────────────────────────────────
 
 
 def _load_batch_docs(
@@ -96,11 +352,8 @@ def _publish_progress(job_id: str, conn: Any) -> None:
 
 
 async def _process_one(
-    job_id: str,
-    output_dir: str,
-    doc: dict[str, Any],
-    counters: dict[str, int],
-    counters_lock: asyncio.Lock,
+    job_id: str, output_dir: str, doc: dict[str, Any],
+    counters: dict[str, int], counters_lock: asyncio.Lock,
 ) -> None:
     source_sha = doc["source_sha256"]
     source_path = doc["source_path"]
@@ -111,15 +364,12 @@ async def _process_one(
     if q.runner().is_cancelled(job_id):
         return
 
-    # Acquire lease
     conn = _db.connect()
     try:
         got = q.acquire_lease(conn, output_dir, source_sha, phash, job_id)
         if not got:
             q.log_event(job_id, {"event": "lease_skip", "sha": source_sha})
             return
-
-        # Seed the docs row
         conn.execute(
             """INSERT OR REPLACE INTO docs
                (output_dir, source_sha256, pipeline_hash, source_path, source_format,
@@ -139,21 +389,11 @@ async def _process_one(
             last_err = "cancelled"
             break
         try:
-            q.log_event(
-                job_id,
-                {"event": "convert_start", "sha": source_sha, "attempt": attempt,
-                 "path": source_path},
-            )
-            meta = await _call_convert(source_path, output_dir, pipeline)
+            meta = await _call_convert_legacy(source_path, output_dir, pipeline)
             last_err = None
             break
         except Exception as e:
             last_err = f"{type(e).__name__}: {e}"
-            q.log_event(
-                job_id,
-                {"event": "convert_fail", "sha": source_sha, "attempt": attempt,
-                 "error": last_err, "traceback": traceback.format_exc()[-2000:]},
-            )
             await asyncio.sleep(min(2**attempt, 5))
     runtime_ms = int((time.time() - t0) * 1000)
 
@@ -195,7 +435,6 @@ async def _process_one(
     finally:
         conn.close()
 
-    # Manifest entry
     entry = {
         "source_sha256": source_sha,
         "source_path": source_path,
@@ -235,7 +474,6 @@ async def run_batch(
     stratum_pipelines: list[dict[str, Any]],
     concurrency: int = 2,
 ) -> None:
-    """Top-level coroutine; launched as a Task by the router."""
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     q.log_event(job_id, {"event": "batch_start", "scan_id": scan_id, "output_dir": output_dir})
 
@@ -247,8 +485,6 @@ async def run_batch(
             status="running", started_at=q.now_iso(), docs_total=len(docs),
         )
         _publish_progress(job_id, conn)
-
-        # Seed folder_root on manifest if we can
         scan = conn.execute(
             "SELECT folder_root FROM scans WHERE id = ?", (scan_id,)
         ).fetchone()
@@ -257,7 +493,6 @@ async def run_batch(
         conn.close()
 
     if folder_root:
-        # Ensure manifest exists with folder_root baked in
         try:
             from backend.manifest import read_manifest, write_manifest
             m = read_manifest(output_dir)
@@ -296,10 +531,7 @@ async def run_batch(
             _publish_progress(job_id, conn)
         finally:
             conn.close()
-        q.log_event(
-            job_id,
-            {"event": "batch_end", "status": final_status, **counters},
-        )
+        q.log_event(job_id, {"event": "batch_end", "status": final_status, **counters})
     except Exception as e:
         q.log_event(
             job_id,

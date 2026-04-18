@@ -29,6 +29,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import yaml  # type: ignore[import-untyped]
+
 SCHEMA_VERSION = 1
 
 _locks: dict[str, threading.Lock] = {}
@@ -113,6 +115,13 @@ def write_manifest(output_dir: str | Path, manifest: dict[str, Any]) -> None:
     manifest.setdefault("docs", [])
     with _lock_for(out):
         _atomic_write(_manifest_path(out), json.dumps(manifest, indent=2, sort_keys=False))
+        try:
+            _atomic_write(
+                out / "manifest.yaml",
+                yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True),
+            )
+        except Exception:
+            pass
 
 
 def append_manifest_entry(
@@ -147,4 +156,11 @@ def append_manifest_entry(
             manifest["docs"].append(entry)
         manifest["updated_at"] = _now()
         _atomic_write(_manifest_path(out), json.dumps(manifest, indent=2, sort_keys=False))
+        try:
+            _atomic_write(
+                out / "manifest.yaml",
+                yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True),
+            )
+        except Exception:
+            pass
         return manifest

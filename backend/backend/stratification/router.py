@@ -18,9 +18,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from . import filemap as _filemap
 from .db import connect
 from .sampling import DocRow, default_seed, pick_sample
-from .scanner import ScanError, scan_folder
+from .scanner import ScanError, emit_filemaps_for_scan, scan_folder
 
 router = APIRouter(tags=["scan"])
 
@@ -107,6 +108,9 @@ class ScanResult(BaseModel):
     strata: list[StratumOut]
     skipped: list[SkippedOut]
     poppler_missing: bool = False
+    folders_with_filemaps: int = 0
+    files_new: int = 0
+    files_deleted: int = 0
 
 
 class SampleRequest(BaseModel):
@@ -208,6 +212,12 @@ def scan(req: ScanRequest) -> ScanResult:
             )
         conn.commit()
 
+    # Emit filemaps per folder (Level B).
+    try:
+        folders_written = emit_filemaps_for_scan(out, scan_id, root=Path(out.folder))
+    except Exception:
+        folders_written = 0
+
     return ScanResult(
         scan_id=scan_id,
         folder=out.folder,
@@ -215,7 +225,50 @@ def scan(req: ScanRequest) -> ScanResult:
         strata=strata_out,
         skipped=[SkippedOut(path=s.path, reason=s.reason) for s in out.skipped],
         poppler_missing=out.poppler_missing,
+        folders_with_filemaps=folders_written,
     )
+
+
+# ─── Filemap endpoints (Level B) ────────────────────────────────────────────
+
+
+class FilemapUpdate(BaseModel):
+    path: str
+    user_included: bool | None = None
+    user_content_type: str | None = None
+    user_notes: str | None = None
+
+
+class FilemapPatchRequest(BaseModel):
+    files: list[FilemapUpdate] = Field(default_factory=list)
+    defaults: dict[str, Any] | None = None
+
+
+@router.get("/filemap")
+def get_filemap(folder: str = Query(...)) -> dict[str, Any]:
+    fm = _filemap.read_filemap(folder)
+    if fm is None:
+        raise HTTPException(status_code=404, detail=f"no filemap at {folder}")
+    return fm
+
+
+@router.patch("/filemap")
+def patch_filemap(
+    req: FilemapPatchRequest, folder: str = Query(...)
+) -> dict[str, Any]:
+    updates = [u.model_dump(exclude_unset=True) for u in req.files]
+    try:
+        return _filemap.update_user_fields(folder, updates, defaults=req.defaults)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.get("/filetree")
+def get_filetree(root: str = Query(...)) -> dict[str, Any]:
+    p = Path(root)
+    if not p.exists() or not p.is_dir():
+        raise HTTPException(status_code=404, detail=f"not a directory: {root}")
+    return _filemap.build_filetree(p)
 
 
 @router.post("/strata/sample", response_model=SampleResult)

@@ -112,6 +112,55 @@ class DocPaths:
         )
 
 
+@dataclass(frozen=True)
+class MirroredPaths:
+    """Mirrored layout (Level B): output files sit alongside a mirror of the source tree.
+
+    Example: source `/root/a/b/report.pdf`, output_dir `/out`, root_base `/root` →
+        /out/a/b/report.pdf.md
+        /out/a/b/report.pdf.json
+        /out/a/b/report.pdf.anchors.json
+        /out/a/b/report.pdf.meta.json
+        /out/a/b/images/report.pdf/*.png
+    """
+
+    dir: Path  # the folder the sidecars live in
+    stem: str  # `<source_basename_with_ext>` (e.g. "report.pdf")
+    md: Path
+    json_: Path
+    anchors: Path
+    meta: Path
+    images_dir: Path
+
+    @classmethod
+    def for_source(
+        cls,
+        source_path: Path,
+        output_dir: Path,
+        output_root: Path | None = None,
+    ) -> MirroredPaths:
+        source_path = Path(source_path).resolve()
+        if output_root is not None:
+            output_root = Path(output_root).resolve()
+            try:
+                rel_parent = source_path.parent.relative_to(output_root)
+            except ValueError:
+                rel_parent = Path(source_path.parent.name)
+            target_dir = output_dir / rel_parent
+        else:
+            target_dir = output_dir
+        stem = source_path.name  # basename with extension
+        return cls(
+            dir=target_dir,
+            stem=stem,
+            md=target_dir / f"{stem}.md",
+            json_=target_dir / f"{stem}.json",
+            anchors=target_dir / f"{stem}.anchors.json",
+            meta=target_dir / f"{stem}.meta.json",
+            images_dir=target_dir / "images" / stem,
+        )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Pipeline → Docling DocumentConverter construction
 
@@ -478,6 +527,162 @@ def convert_source(
 
     _upsert_docs_row(output_dir=output_dir, meta=meta)
     return ConversionOutcome(meta=meta, paths=paths, skipped=False)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Mirrored output (Level B)
+
+
+@dataclass
+class MirroredOutcome:
+    meta: dict[str, Any]
+    paths: MirroredPaths
+    skipped: bool
+
+
+def convert_source_mirrored(
+    source_path: Path,
+    output_dir: Path,
+    params: PipelineParams | dict[str, Any] | None = None,
+    *,
+    output_root: Path | None = None,
+    force: bool = False,
+) -> MirroredOutcome:
+    """Convert a source file into the mirrored output layout (Level B).
+
+    Output layout: `<output_dir>/<rel_parent>/<source_name>.{md,json,anchors.json,meta.json}`
+    where `rel_parent = source_path.parent.relative_to(output_root)`. If
+    `output_root` is None, sidecars land directly under `output_dir`.
+
+    Atomic write: render into a `.tmp-<uuid>` sibling dir, then move files
+    into place.
+    """
+    import uuid as _uuid
+
+    source_path = Path(source_path).resolve()
+    if not source_path.is_file():
+        raise FileNotFoundError(f"source_path does not exist: {source_path}")
+    output_dir = Path(output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    pp = normalize(params)
+    ph = pipeline_hash(pp)
+    sha = sha256_file(source_path)
+    fmt = detect_format(source_path)
+
+    mpaths = MirroredPaths.for_source(source_path, output_dir, output_root)
+    mpaths.dir.mkdir(parents=True, exist_ok=True)
+
+    # No-op resume: same pipeline_hash already written
+    if not force and mpaths.meta.exists() and mpaths.md.exists() and mpaths.json_.exists():
+        try:
+            existing = json.loads(mpaths.meta.read_text())
+            if existing.get("pipeline_hash") == ph:
+                return MirroredOutcome(meta=existing, paths=mpaths, skipped=True)
+        except Exception:
+            pass
+
+    tmp_dir = mpaths.dir / f".tmp-{_uuid.uuid4().hex}-{mpaths.stem}"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_md = tmp_dir / f"{mpaths.stem}.md"
+    tmp_json = tmp_dir / f"{mpaths.stem}.json"
+    tmp_anchors = tmp_dir / f"{mpaths.stem}.anchors.json"
+    tmp_meta = tmp_dir / f"{mpaths.stem}.meta.json"
+    tmp_images = tmp_dir / "images" / mpaths.stem
+    tmp_images.mkdir(parents=True, exist_ok=True)
+
+    started_at = datetime.now(UTC)
+    t0 = time.perf_counter()
+    status = "ok"
+    error_msg: str | None = None
+    md_text = ""
+    json_obj: dict[str, Any] = {}
+    anchors: list[dict[str, Any]] = []
+    empty_pages: list[int] = []
+    doc_for_stats: Any = None
+
+    try:
+        converter = _build_converter(pp)
+        result = converter.convert(str(source_path))
+        doc = result.document
+        doc_for_stats = doc
+        md_text = doc.export_to_markdown(page_break_placeholder="<!--- page-break --->")
+        json_obj = doc.export_to_dict()
+        anchors, empty_pages = _build_anchors(doc, md_text)
+    except Exception as exc:
+        status = "error"
+        error_msg = f"{type(exc).__name__}: {exc}"
+
+    tmp_md.write_text(md_text, encoding="utf-8")
+    tmp_json.write_text(
+        json.dumps(json_obj, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    tmp_anchors.write_text(
+        json.dumps(anchors, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    json_size = tmp_json.stat().st_size
+    runtime_ms = int((time.perf_counter() - t0) * 1000)
+
+    stats = (
+        _collect_stats(doc_for_stats, md_text, json_size)
+        if doc_for_stats is not None
+        else {
+            "page_count": 0,
+            "text_element_count": 0,
+            "table_count": 0,
+            "picture_count": 0,
+            "md_char_count": len(md_text),
+            "json_size_bytes": json_size,
+        }
+    )
+    quality = (
+        _collect_quality(doc_for_stats, empty_pages)
+        if doc_for_stats is not None
+        else {"ocr_confidence_per_page": [], "empty_pages": [], "warnings": []}
+    )
+
+    try:
+        docling_ver = pkg_version("docling")
+    except Exception:
+        docling_ver = "unknown"
+
+    meta: dict[str, Any] = {
+        "source_sha256": sha,
+        "source_path": str(source_path),
+        "source_format": fmt,
+        "docling_version": docling_ver,
+        "pipeline_params": pp.model_dump(),
+        "pipeline_hash": ph,
+        "runtime_ms": runtime_ms,
+        "status": status,
+        "error": error_msg,
+        "stats": stats,
+        "quality_signals": quality,
+        "converted_at": started_at.isoformat().replace("+00:00", "Z"),
+        "output_path": str(mpaths.md),
+    }
+    tmp_meta.write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    # Move each into place atomically (files individually).
+    for src, dst in [
+        (tmp_md, mpaths.md),
+        (tmp_json, mpaths.json_),
+        (tmp_anchors, mpaths.anchors),
+        (tmp_meta, mpaths.meta),
+    ]:
+        os.replace(str(src), str(dst))
+    # Move images dir (replacing existing)
+    if mpaths.images_dir.exists():
+        shutil.rmtree(mpaths.images_dir, ignore_errors=True)
+    mpaths.images_dir.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(str(tmp_images), str(mpaths.images_dir))
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    _upsert_docs_row(output_dir=output_dir, meta=meta)
+    return MirroredOutcome(meta=meta, paths=mpaths, skipped=False)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

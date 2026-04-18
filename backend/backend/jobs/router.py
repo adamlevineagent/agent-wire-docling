@@ -15,6 +15,7 @@ from backend.jobs import batch as _batch
 from backend.jobs import export as _export
 from backend.jobs import queue as q
 from backend.jobs import taste as _taste
+from backend.jobs import triage as _triage
 from backend.manifest import read_manifest
 
 router = APIRouter(tags=["batch"])
@@ -72,10 +73,20 @@ class StratumPipeline(BaseModel):
 
 
 class BatchRequest(BaseModel):
-    scan_id: str
+    # Legacy fields (Wave 1-3) - backward-compat
+    scan_id: str | None = None
+    stratum_pipelines: list[StratumPipeline] | None = None
+    # New fields (Level B)
+    root: str | None = None
+    pipeline_by_stratum: dict[str, dict[str, Any]] | None = None
+    pipeline_by_content_type: dict[str, dict[str, Any]] | None = None
+    # Shared
     output_dir: str
     concurrency: int = 2
-    stratum_pipelines: list[StratumPipeline]
+
+
+class TriageRetryRequest(BaseModel):
+    output_dir: str
 
 
 class TasteSessionCreate(BaseModel):
@@ -101,6 +112,48 @@ class ExportRequest(BaseModel):
 
 @router.post("/batch")
 async def create_batch(req: BatchRequest) -> dict[str, Any]:
+    # Level B filemap mode: `root` present
+    if req.root:
+        from backend.stratification import filemap as _fm
+        try:
+            included = _fm.collect_included_files(req.root)
+        except Exception:
+            included = []
+        total = len(included)
+        conn = _db.connect()
+        try:
+            jid = q.insert_job(
+                conn,
+                kind="batch",
+                status="queued",
+                output_dir=req.output_dir,
+                scan_id=None,
+                stratum_pipelines=[],
+                concurrency=req.concurrency,
+                docs_total=total,
+            )
+            job_row = q.read_job(conn, jid)
+        finally:
+            conn.close()
+        q.runner().register(jid)
+        task = asyncio.create_task(
+            _batch.run_batch_from_filemaps(
+                jid, req.root, req.output_dir,
+                req.pipeline_by_stratum or {},
+                req.pipeline_by_content_type or {},
+                req.concurrency,
+            )
+        )
+        q.runner().track(jid, task)
+        assert job_row is not None
+        return _job_to_payload(job_row)
+
+    # Legacy stratum mode
+    if not req.scan_id or req.stratum_pipelines is None:
+        raise HTTPException(
+            status_code=400,
+            detail="batch requires either 'root' (filemap mode) or 'scan_id' + 'stratum_pipelines' (legacy)",
+        )
     sp = [spx.model_dump() for spx in req.stratum_pipelines]
     conn = _db.connect()
     try:
@@ -135,6 +188,25 @@ async def create_batch(req: BatchRequest) -> dict[str, Any]:
     q.runner().track(jid, task)
     assert job_row is not None
     return _job_to_payload(job_row)
+
+
+# ── Triage ──────────────────────────────────────────────────────────────────
+
+
+@router.get("/triage")
+async def get_triage(output_dir: str = Query(...)) -> dict[str, Any]:
+    t = _triage.read_triage(output_dir)
+    if t is None:
+        raise HTTPException(status_code=404, detail=f"no triage.yaml at {output_dir}")
+    return t
+
+
+@router.post("/triage/retry")
+async def retry_triage(req: TriageRetryRequest) -> dict[str, Any]:
+    try:
+        return _triage.apply_triage_retries(req.output_dir)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
 
 @router.post("/batch/{job_id}/cancel")

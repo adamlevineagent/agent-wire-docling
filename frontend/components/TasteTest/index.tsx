@@ -501,9 +501,29 @@ export function TasteTest() {
                   stratumName={activeStratum ?? ""}
                 />
                 {activeStratumState && samplesWithApproval.length === 0 && (
-                  <div className="px-3 py-2 text-xs text-fg-muted">
-                    Press <span className="font-mono">Sample</span> on this stratum (or{" "}
-                    <span className="font-mono">Shift+S</span>) to pull {Math.min(5, activeStratumState.size)} docs.
+                  <div className="flex-1 flex items-center justify-center p-10">
+                    <div className="text-center max-w-sm space-y-4">
+                      <div className="label-eyebrow">Stratum</div>
+                      <div className="font-mono text-lg text-fg-primary">
+                        {activeStratumState.name}
+                      </div>
+                      <div className="text-sm text-fg-secondary leading-relaxed">
+                        Pull {Math.min(5, activeStratumState.size)} sample
+                        {activeStratumState.size === 1 ? "" : "s"} from this stratum to start reviewing.
+                      </div>
+                      <div className="pt-2 flex items-center justify-center gap-3">
+                        <Button
+                          variant="primary"
+                          disabled={!!sampling}
+                          onClick={() => runSample(activeStratumState.name)}
+                        >
+                          {sampling === activeStratumState.name
+                            ? "Sampling…"
+                            : `Sample ${Math.min(5, activeStratumState.size)} docs`}
+                          <span className="kbd ml-1">⇧S</span>
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                 )}
                 {activeStratumState && samplesWithApproval.length > 0 &&

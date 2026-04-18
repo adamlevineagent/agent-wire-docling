@@ -112,13 +112,14 @@ export function StrataPane({
                 width: "100%",
                 textAlign: "left",
                 padding: "10px 14px",
+                borderTop: "none",
+                borderRight: "none",
+                borderBottom: "none",
                 borderLeft: "2px solid " + (isActive ? "var(--cyan)" : "transparent"),
                 background: isActive
                   ? "linear-gradient(90deg, var(--cyan-soft), transparent 70%)"
                   : "transparent",
                 cursor: "pointer",
-                border: "none",
-                borderBottom: "none",
               }}
             >
               <div

@@ -10,7 +10,9 @@ import { Dot } from "../ui/dot";
 import { Kbd } from "../ui/kbd";
 import { PrismGlyph } from "./prism-glyph";
 import { FolderEntry } from "./folder-entry";
-import { api, type Filemap, type FiletreeNode } from "../../lib/api-client";
+import { FolderPicker } from "./folder-picker";
+import { useToast } from "../ui/toast";
+import { api, ApiError, type Filemap, type FiletreeNode } from "../../lib/api-client";
 
 // Stratum color palette — matches the spectrum bar design.
 const STRATUM_COLORS = [
@@ -32,7 +34,36 @@ function colorFor(i: number): string {
 const looksAbsolute = (p: string) => p.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(p);
 
 export function ScanView() {
-  const { scan, folder, setStage } = useAppState();
+  const { scan, folder, setStage, setScan, setFolder } = useAppState();
+  const toast = useToast();
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const rescan = useMutation({
+    mutationFn: async (folderPath: string) =>
+      api.scan({ folder: folderPath, follow_symlinks: false, max_files: 50000 }),
+    onSuccess: (result) => {
+      setScan(result);
+      setFolder(result.folder);
+      toast.push({
+        kind: "success",
+        title: "Scan complete",
+        detail: `${result.total_files} files across ${result.strata.length} strata`,
+      });
+    },
+    onError: (err) => {
+      setScan(null);
+      if (err instanceof ApiError) {
+        toast.push({
+          kind: err.status === 0 ? "warning" : "danger",
+          title:
+            err.status === 0 ? "Backend not reachable" : `Scan failed (${err.status})`,
+          detail: err.message + (err.detail ? ` — ${err.detail}` : ""),
+        });
+      } else {
+        toast.push({ kind: "danger", title: "Scan failed", detail: String(err) });
+      }
+    },
+  });
 
   // Screen 1 — folder entry (prism glyph hero)
   if (!folder && !scan) {
@@ -70,6 +101,15 @@ export function ScanView() {
           Groups of docs that share a conversion pipeline
         </span>
         <div className="flex-1" />
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setPickerOpen(true)}
+          disabled={rescan.isPending}
+          title="Pick a different folder and re-scan"
+        >
+          {rescan.isPending ? "Scanning…" : "Change folder…"}
+        </Button>
         <Button variant="ghost" size="sm">
           Edit inclusions
         </Button>
@@ -77,6 +117,17 @@ export function ScanView() {
           Continue to taste <Kbd>↵</Kbd>
         </Button>
       </div>
+
+      {pickerOpen && (
+        <FolderPicker
+          initialPath={folder || null}
+          onPick={(path) => {
+            setPickerOpen(false);
+            rescan.mutate(path);
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
 
       <div className="flex-1 overflow-auto p-7">
         {/* Headline */}

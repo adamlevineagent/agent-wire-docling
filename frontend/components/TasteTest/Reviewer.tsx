@@ -28,6 +28,7 @@ import { useDocForVizDiff } from "./useDocForVizDiff";
 import { Button } from "../ui/button";
 import { api } from "../../lib/api-client";
 import { useToast } from "../ui/toast";
+import { TasteActionBar } from "./ActionBar";
 
 export interface ReviewerProps {
   hash: string;
@@ -39,6 +40,11 @@ export interface ReviewerProps {
   onAdvance: () => void;
   onPrev: () => void;
   onNext: () => void;
+  /** 1-based doc position for the verdict bar caption. */
+  docIndex?: number | null;
+  docTotal?: number | null;
+  /** Opens the per-stratum Advanced modal in Re-run context. */
+  onOpenAdvanced?: () => void;
 }
 
 export function Reviewer(props: ReviewerProps) {
@@ -52,6 +58,9 @@ export function Reviewer(props: ReviewerProps) {
     onPrev,
     onNext,
     existingApproval,
+    docIndex,
+    docTotal,
+    onOpenAdvanced,
   } = props;
 
   const { data, loading, error, refetch } = useDocForVizDiff(hash, output_dir);
@@ -268,6 +277,7 @@ export function Reviewer(props: ReviewerProps) {
           )}
           currentPipeline={pipeline}
           shortcutScope="tastetest"
+          hideReviewButtons
           onApprove={(d) => submit("approved", d.notes)}
           onReject={(d) => submit("rejected", d.notes)}
           onSkip={() => submit("skipped")}
@@ -277,6 +287,20 @@ export function Reviewer(props: ReviewerProps) {
           onPrev={onPrev}
         />
       </div>
+      <TasteActionBar
+        docIndex={docIndex ?? null}
+        docTotal={docTotal ?? null}
+        stratumName={stratumName}
+        busy={busy}
+        onApprove={() => submit("approved")}
+        onReject={() => submit("rejected")}
+        onSkip={() => submit("skipped")}
+        onFlag={() => submit("flagged")}
+        onRerun={() => {
+          if (onOpenAdvanced) onOpenAdvanced();
+          else doRerun(pipeline);
+        }}
+      />
     </div>
   );
 }

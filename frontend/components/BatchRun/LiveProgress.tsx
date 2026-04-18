@@ -1,21 +1,35 @@
 "use client";
 
 /**
- * Live progress view: shown while a batch is running.
+ * Live progress view — the "walk away and come back" screen.
  *
- * Prefer SSE via /jobs/{id}/stream; fall back to 1Hz polling of /jobs/{id}
- * if SSE fails to connect or errors at runtime.
+ * Design: one sentence of truth at the top, per-stratum cards below,
+ * recent event tail card. Calm, not busy. SSE primary, poll fallback.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import type { Job } from "../../lib/api-client";
 import { api, ApiError } from "../../lib/api-client";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { useToast } from "../ui/toast";
 import { useShortcutScope, BATCHRUN_BINDINGS } from "../../lib/shortcuts";
 import { formatDuration } from "./estimates";
+
+// Stratum colour palette mirrors the spectrum bar in Scan.
+const STRATUM_COLORS = [
+  "var(--gold)",
+  "var(--cyan)",
+  "#40d080",
+  "#a78bfa",
+  "#f08060",
+  "#b3b8c4",
+  "#ec4899",
+  "#6366f1",
+];
+function colorFor(i: number) {
+  return STRATUM_COLORS[i % STRATUM_COLORS.length];
+}
 
 interface Props {
   jobId: string;
@@ -24,10 +38,11 @@ interface Props {
   onPause: () => void;
 }
 
-// Local derived-event log for a lightweight "what's happening" tail.
 interface LogEntry {
   ts: number;
-  text: string;
+  icon: "ok" | "warn";
+  file: string;
+  meta: string;
 }
 
 function deriveEvents(prev: Job | null, next: Job): LogEntry[] {
@@ -38,15 +53,27 @@ function deriveEvents(prev: Job | null, next: Job): LogEntry[] {
   const prevFailed = prev?.progress?.docs_failed ?? 0;
   const nextFailed = next.progress?.docs_failed ?? 0;
   if (nextDone > prevDone) {
-    out.push({ ts: now, text: `+${nextDone - prevDone} doc(s) completed` });
+    out.push({
+      ts: now,
+      icon: "ok",
+      file: `+${nextDone - prevDone} doc(s) completed`,
+      meta: "",
+    });
   }
   if (nextFailed > prevFailed) {
-    out.push({ ts: now, text: `+${nextFailed - prevFailed} doc(s) failed` });
-  }
-  if (prev?.status !== next.status) {
-    out.push({ ts: now, text: `status → ${next.status}` });
+    out.push({
+      ts: now,
+      icon: "warn",
+      file: `+${nextFailed - prevFailed} doc(s) failed`,
+      meta: "",
+    });
   }
   return out;
+}
+
+function fmtTime(ms: number): string {
+  const d = new Date(ms);
+  return d.toLocaleTimeString("en-GB", { hour12: false });
 }
 
 export function LiveProgress({ jobId, onJobFinal, onRequestExport, onPause }: Props) {
@@ -77,7 +104,6 @@ export function LiveProgress({ jobId, onJobFinal, onRequestExport, onPause }: Pr
     }
   };
 
-  // SSE with poll fallback
   useEffect(() => {
     let cancelled = false;
     let es: EventSource | null = null;
@@ -125,9 +151,7 @@ export function LiveProgress({ jobId, onJobFinal, onRequestExport, onPause }: Pr
     function startSSE() {
       try {
         es = new EventSource(`/api/jobs/${jobId}/stream`);
-        es.onopen = () => {
-          setTransport("sse");
-        };
+        es.onopen = () => setTransport("sse");
         es.onmessage = (ev) => {
           try {
             const data = JSON.parse(ev.data) as Job;
@@ -145,7 +169,6 @@ export function LiveProgress({ jobId, onJobFinal, onRequestExport, onPause }: Pr
           }
         };
         es.onerror = () => {
-          // Fall back to polling
           console.warn("[BatchRun] SSE errored; falling back to poll");
           es?.close();
           es = null;
@@ -172,12 +195,8 @@ export function LiveProgress({ jobId, onJobFinal, onRequestExport, onPause }: Pr
 
   const cancel = useMutation({
     mutationFn: () => api.cancelBatch(jobId),
-    onMutate: () => {
-      setCancelling(true);
-    },
-    onSuccess: (j) => {
-      applyUpdate(j);
-    },
+    onMutate: () => setCancelling(true),
+    onSuccess: (j) => applyUpdate(j),
     onError: (err) => {
       setCancelling(false);
       const detail =
@@ -186,7 +205,6 @@ export function LiveProgress({ jobId, onJobFinal, onRequestExport, onPause }: Pr
     },
   });
 
-  // Shortcuts
   useShortcutScope({
     scope: "batchrun",
     bindings: BATCHRUN_BINDINGS,
@@ -205,23 +223,11 @@ export function LiveProgress({ jobId, onJobFinal, onRequestExport, onPause }: Pr
   const failed = progress?.docs_failed ?? 0;
   const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
   const etaSec = progress?.eta_seconds ?? null;
-
-  const statusTone = useMemo(() => {
-    switch (job?.status) {
-      case "running":
-        return "accent";
-      case "queued":
-        return "info";
-      case "cancelled":
-        return "warning";
-      case "failed":
-        return "danger";
-      case "completed":
-        return "success";
-      default:
-        return "neutral";
-    }
-  }, [job?.status]);
+  const dps = progress?.docs_per_sec ?? null;
+  const outputDir = useMemo(() => {
+    const j = job as unknown as { output_dir?: string } | null;
+    return j?.output_dir ?? "";
+  }, [job]);
 
   if (error) {
     return (
@@ -240,150 +246,338 @@ export function LiveProgress({ jobId, onJobFinal, onRequestExport, onPause }: Pr
   }
 
   if (!job) {
-    return (
-      <div className="p-6 text-sm text-fg-muted">Loading job {jobId}…</div>
-    );
+    return <div className="p-6 text-sm text-fg-muted">Loading job {jobId}…</div>;
   }
 
   return (
-    <div className="p-6 space-y-5 max-w-5xl">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="text-xs uppercase tracking-wider text-fg-muted">
-            Batch · {job.id}
-          </div>
-          <div className="flex items-center gap-2 mt-1">
-            <Badge tone={statusTone}>{job.status}</Badge>
-            <span className="text-xs text-fg-muted">
-              transport: {transport}
-            </span>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {job.status === "running" && (
-            <>
-              <Button
-                variant="secondary"
-                onClick={() => onPause()}
-                title="Pause (see note in deferral ledger)"
-              >
-                Pause
-              </Button>
-              <Button
-                variant="danger"
-                disabled={cancelling}
-                onClick={() => cancel.mutate()}
-              >
-                {cancelling ? "Cancelling…" : "Cancel"}
-              </Button>
-            </>
-          )}
-          {(job.status === "completed" ||
-            job.status === "cancelled") && (
-            <Button variant="primary" onClick={onRequestExport}>
-              Export
+    <div className="h-full flex flex-col min-h-0">
+      {/* Action bar (top) */}
+      <div
+        style={{
+          height: 44,
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "0 20px",
+          borderBottom: "1px solid var(--b0)",
+          background: "var(--s0)",
+          flexShrink: 0,
+        }}
+      >
+        <span className="label-eyebrow">Batch · step 3 of 3</span>
+        <span className="text-fg-disabled" style={{ fontSize: 11 }}>·</span>
+        <span className="text-fg-muted" style={{ fontSize: 11 }}>output:</span>
+        <span
+          className="mono truncate"
+          style={{ fontSize: 11, color: "var(--fg1)", maxWidth: 420 }}
+          title={outputDir}
+        >
+          {outputDir || "—"}
+        </span>
+        <div style={{ flex: 1 }} />
+        <span className="mono" style={{ fontSize: 10.5, color: "var(--fg3)" }}>
+          {transport}
+        </span>
+        {job.status === "running" && (
+          <>
+            <Button size="sm" variant="ghost" onClick={onPause} title="Pause">
+              Pause
             </Button>
-          )}
-        </div>
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={cancelling}
+              onClick={() => cancel.mutate()}
+            >
+              {cancelling ? "Cancelling…" : "Cancel"}
+            </Button>
+          </>
+        )}
+        {(job.status === "completed" || job.status === "cancelled") && (
+          <Button size="sm" variant="primary" onClick={onRequestExport}>
+            Export
+          </Button>
+        )}
       </div>
 
-      <div className="border border-border-default rounded bg-surface-1 p-4 space-y-3">
-        <div className="flex items-center justify-between text-sm">
-          <div className="tabular-nums">
-            <span className="text-fg-primary font-semibold">{done}</span>
-            <span className="text-fg-muted"> / {total} docs</span>
+      <div className="flex-1 overflow-auto" style={{ padding: "32px 40px" }}>
+        {/* Sentence of truth */}
+        <div style={{ marginBottom: 28 }}>
+          <div className="label-eyebrow" style={{ marginBottom: 8 }}>
+            {job.status === "running"
+              ? "Converting"
+              : job.status === "queued"
+                ? "Queued"
+                : job.status === "completed"
+                  ? "Done"
+                  : job.status}
+          </div>
+          <div
+            style={{
+              fontSize: 26,
+              lineHeight: 1.2,
+              letterSpacing: -0.4,
+              fontWeight: 500,
+            }}
+          >
+            <span className="num" style={{ color: "var(--fg0)" }}>
+              {done.toLocaleString()}
+            </span>
+            <span className="text-fg-muted"> of </span>
+            <span className="num" style={{ color: "var(--fg0)" }}>
+              {total.toLocaleString()}
+            </span>
+            <span className="text-fg-muted"> documents.</span>
+          </div>
+          <div style={{ fontSize: 14, color: "var(--fg2)", marginTop: 6 }}>
+            {etaSec != null && (
+              <>
+                About{" "}
+                <span style={{ color: "var(--fg1)" }}>
+                  {formatDuration(etaSec)}
+                </span>{" "}
+                remaining
+              </>
+            )}
+            {dps != null && (
+              <>
+                {etaSec != null ? " at " : "Running at "}
+                <span className="mono">{dps.toFixed(2)} docs/s</span>
+              </>
+            )}
             {failed > 0 && (
-              <span className="text-danger-fg ml-3">({failed} failed)</span>
+              <>
+                <span className="text-fg-disabled"> · </span>
+                <span style={{ color: "var(--warn)" }}>{failed} failed</span>
+                <span className="text-fg-muted">
+                  {" "}— you&apos;ll be able to retry after
+                </span>
+              </>
             )}
           </div>
-          <div className="text-xs text-fg-muted tabular-nums">
-            {progress?.docs_per_sec
-              ? `${progress.docs_per_sec.toFixed(2)} docs/s`
-              : "—"}
-            {etaSec != null && ` · ETA ${formatDuration(etaSec)}`}
-          </div>
-        </div>
-        <div className="h-2 bg-surface-3 rounded overflow-hidden">
           <div
-            className={
-              failed > 0
-                ? "h-full bg-warning transition-all"
-                : "h-full bg-accent transition-all"
-            }
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-      </div>
-
-      {progress?.per_stratum && progress.per_stratum.length > 0 && (
-        <div className="space-y-2">
-          <div className="text-xs uppercase tracking-wider text-fg-muted">
-            Per-stratum
+            style={{
+              marginTop: 16,
+              height: 6,
+              background: "var(--s2)",
+              borderRadius: 3,
+              overflow: "hidden",
+              position: "relative",
+            }}
+          >
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: `${pct}%`,
+                background: "var(--cyan)",
+                borderRadius: 3,
+                transition: "width 200ms",
+              }}
+            />
           </div>
-          {progress.per_stratum.map((ps) => {
-            const sTotal = ps.total ?? 0;
-            const sDone = ps.done ?? 0;
-            const sFailed = ps.failed ?? 0;
-            const sPct = sTotal > 0 ? (sDone / sTotal) * 100 : 0;
-            return (
-              <div
-                key={ps.name}
-                className="flex items-center gap-3 p-2 rounded border border-border-default bg-surface-1"
-              >
-                <div className="w-48 min-w-0">
-                  <div className="font-mono text-xs truncate" title={ps.name}>
-                    {ps.name}
-                  </div>
-                </div>
-                <div className="flex-1 h-1.5 bg-surface-3 rounded overflow-hidden">
-                  <div
-                    className="h-full bg-accent"
-                    style={{ width: `${sPct}%` }}
-                  />
-                </div>
-                <div className="text-xs text-fg-muted tabular-nums whitespace-nowrap w-24 text-right">
-                  {sDone}/{sTotal}
-                  {sFailed > 0 && (
-                    <span className="text-danger-fg"> ·{sFailed}f</span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
         </div>
-      )}
 
-      <div className="space-y-1">
-        <div className="text-xs uppercase tracking-wider text-fg-muted">
-          Recent events
-        </div>
-        <div className="font-mono text-xs bg-surface-1 border border-border-default rounded p-2 max-h-48 overflow-auto">
-          {log.length === 0 ? (
-            <div className="text-fg-muted italic">
-              No events yet — waiting on first tick…
+        {/* Per-stratum cards */}
+        {progress?.per_stratum && progress.per_stratum.length > 0 && (
+          <>
+            <div className="label-eyebrow" style={{ marginBottom: 12 }}>
+              Per group
             </div>
-          ) : (
-            log
-              .slice()
-              .reverse()
-              .map((e, i) => (
-                <div key={i} className="text-fg-secondary">
-                  <span className="text-fg-muted">
-                    {new Date(e.ts).toLocaleTimeString()}
-                  </span>{" "}
-                  {e.text}
-                </div>
-              ))
-          )}
-        </div>
-      </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 10,
+                marginBottom: 28,
+              }}
+            >
+              {progress.per_stratum.map((ps, i) => {
+                const sTotal = ps.total ?? 0;
+                const sDone = ps.done ?? 0;
+                const sFail = ps.failed ?? 0;
+                const p = sTotal > 0 ? (sDone / sTotal) * 100 : 0;
+                const doneFull = sTotal > 0 && sDone >= sTotal;
+                const color = colorFor(i);
+                return (
+                  <div
+                    key={ps.name}
+                    style={{
+                      padding: "12px 14px",
+                      background: "var(--s1)",
+                      border: "1px solid var(--b0)",
+                      borderRadius: 8,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        marginBottom: 8,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          background: color,
+                          boxShadow: `0 0 6px ${color}`,
+                          opacity: doneFull ? 0.5 : 1,
+                          flexShrink: 0,
+                        }}
+                      />
+                      <span
+                        className="mono truncate"
+                        style={{
+                          fontSize: 12,
+                          color: "var(--fg0)",
+                          fontWeight: 500,
+                        }}
+                      >
+                        {ps.name}
+                      </span>
+                      {doneFull && (
+                        <span
+                          className="mono"
+                          style={{
+                            fontSize: 9.5,
+                            padding: "1px 5px",
+                            borderRadius: 3,
+                            background: "var(--ok-soft)",
+                            color: "var(--ok)",
+                          }}
+                        >
+                          done
+                        </span>
+                      )}
+                      {sFail > 0 && (
+                        <span
+                          className="mono"
+                          style={{
+                            fontSize: 9.5,
+                            padding: "1px 5px",
+                            borderRadius: 3,
+                            background: "var(--warn-soft)",
+                            color: "var(--warn)",
+                          }}
+                        >
+                          {sFail} fail
+                        </span>
+                      )}
+                      <div style={{ flex: 1 }} />
+                      <span
+                        className="num"
+                        style={{ fontSize: 11.5, color: "var(--fg1)" }}
+                      >
+                        {sDone}
+                        <span className="text-fg-disabled">/{sTotal}</span>
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        height: 4,
+                        background: "var(--s2)",
+                        borderRadius: 2,
+                        overflow: "hidden",
+                        position: "relative",
+                      }}
+                    >
+                      <div
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          width: `${p}%`,
+                          background: doneFull ? "var(--ok)" : color,
+                          borderRadius: 2,
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
 
-      {job.error && (
-        <div className="border border-danger rounded bg-danger-bg/30 p-3">
-          <div className="font-medium text-danger-fg">Job error</div>
-          <div className="text-sm text-fg-secondary font-mono">{job.error}</div>
+        {/* Recent event tail */}
+        <div
+          style={{
+            padding: "12px 14px",
+            background: "var(--s1)",
+            border: "1px solid var(--b0)",
+            borderRadius: 8,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginBottom: 8,
+            }}
+          >
+            <span className="label-eyebrow">Recent</span>
+            <div style={{ flex: 1 }} />
+            <span className="mono" style={{ fontSize: 10.5, color: "var(--fg3)" }}>
+              live · {transport}
+            </span>
+          </div>
+          <div
+            style={{
+              fontFamily: "JetBrains Mono, monospace",
+              fontSize: 11,
+              lineHeight: 1.9,
+              color: "var(--fg2)",
+            }}
+          >
+            {log.length === 0 ? (
+              <div className="text-fg-muted italic" style={{ fontStyle: "italic" }}>
+                No events yet — waiting on first tick…
+              </div>
+            ) : (
+              log
+                .slice()
+                .reverse()
+                .slice(0, 7)
+                .map((e, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "64px 16px 1fr 120px",
+                      gap: 10,
+                    }}
+                  >
+                    <span className="text-fg-disabled">{fmtTime(e.ts)}</span>
+                    <span
+                      style={{
+                        color: e.icon === "ok" ? "var(--ok)" : "var(--warn)",
+                      }}
+                    >
+                      {e.icon === "ok" ? "✓" : "⚠"}
+                    </span>
+                    <span
+                      className="truncate"
+                      style={{ color: "var(--fg1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                    >
+                      {e.file}
+                    </span>
+                    <span className="text-fg-disabled">{e.meta}</span>
+                  </div>
+                ))
+            )}
+          </div>
         </div>
-      )}
+
+        {job.error && (
+          <div className="mt-5 border border-danger rounded bg-danger-bg/30 p-3">
+            <div className="font-medium text-danger-fg">Job error</div>
+            <div className="text-sm text-fg-secondary font-mono">{job.error}</div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

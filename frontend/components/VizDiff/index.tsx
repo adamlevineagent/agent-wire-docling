@@ -36,6 +36,12 @@ export interface VizDiffProps extends BaseVizDiffProps {
     totalPages: number;
     gotoPage: (p: number) => void;
   }) => ReactNode;
+  /**
+   * When true, suppress VizDiff's in-header approve/reject/skip/flag/rerun
+   * buttons. Keyboard shortcuts remain wired via the provided callbacks so
+   * an external action bar can drive the flow without duplicate UI.
+   */
+  hideReviewButtons?: boolean;
 }
 import type { MarkdownPaneHandle, OutputTab } from "./MarkdownPane";
 import { VIZDIFF_BINDINGS } from "./types";
@@ -67,6 +73,7 @@ export function VizDiff(props: VizDiffProps) {
     shortcutScope,
     sourceNode,
     middleSlot,
+    hideReviewButtons,
   } = props;
 
   const [tab, setTab] = useState<OutputTab>("rendered");
@@ -229,7 +236,7 @@ export function VizDiff(props: VizDiffProps) {
         </div>
         <div className="flex-1" />
         {/* Review actions — only for callbacks provided */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1" style={hideReviewButtons ? { display: "none" } : undefined}>
           {onApprove && (
             <Button
               size="sm"

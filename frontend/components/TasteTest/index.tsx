@@ -475,6 +475,7 @@ export function TasteTest() {
                   </div>
                 );
               }
+              const docIdx = samplesWithApproval.findIndex((s) => s.hash === activeHash);
               return (
                 <Reviewer
                   hash={activeHash}
@@ -486,6 +487,9 @@ export function TasteTest() {
                   onAdvance={advance}
                   onNext={goNextDoc}
                   onPrev={goPrevDoc}
+                  docIndex={docIdx >= 0 ? docIdx + 1 : null}
+                  docTotal={samplesWithApproval.length || null}
+                  onOpenAdvanced={() => setAdvancedOpen(activeStratumState.name)}
                 />
               );
             })() : (

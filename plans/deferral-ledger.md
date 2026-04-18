@@ -39,7 +39,9 @@ Status: `proposed` | `accepted` | `rejected` | `resolved` (later lifted)
 
 ## Added during Wave 2
 
-(none yet)
+- [accepted] [Wave 2a / Agent E] **Quality badge overlay renders no warnings on the attention.pdf fixture.** — Backend Agent A's conversion currently emits an empty `quality_signals.warnings` array for native-text PDFs (inherits from the three Wave-1 deferrals: OCR conf unwired, figure placeholder mode, VLM flag not wired). VizDiff's `QualityBadgeOverlay` is correct and will light up the moment the backend emits warnings; nothing to fix on the frontend. Fixture data demonstrates 3 badges on the fixture fallback path (`/dev/vizdiff` with no backend). Follow-up resolves automatically when Wave-1 deferrals lift.
+- [accepted] [Wave 2a / Agent E] **Synced scroll uses viewport polling (250ms), not a push channel from the renderer.** — pdf.js has no built-in "visible page changed" event, so `VizDiff` polls `sourceRenderer.getCurrentViewport()` every 250ms and debounces MD-side scroll to ~80ms. Functional impact: a very fast scroll flick can land on page N with the MD still showing N-1 for up to ~330ms before catching up. Acceptable for reviewing. Follow-up: if it feels laggy during the 1500-PDF run, lift polling to 100ms or push from the renderer via an `onViewportChange` callback on `SourceRenderer` (would require a contract edit).
+- [accepted] [Wave 2a / Agent E] **pdf.js worker ships as a copied static asset (`public/pdfjs/pdf.worker.min.mjs`), not bundler-imported.** — The contract note suggests importing from `pdfjs-dist/build/pdf.worker.mjs`; Next 15 + Turbopack makes this brittle across dev/prod modes. Current approach copies the worker into `public/` at setup time. Functional impact: if `pdfjs-dist` upgrades, the copy is stale until re-copied. Follow-up: add a `pnpm postinstall` step that rsyncs the worker on each install.
 
 ## Added during Wave 3
 

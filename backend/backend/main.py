@@ -71,9 +71,28 @@ async def health() -> Health:
     except Exception:
         pass
 
-    # Model readiness: cheap check for the docling cache dir being non-empty
-    docling_cache = _CACHE / "docling"
-    model_ready = docling_cache.exists() and any(docling_cache.iterdir())
+    # Model readiness: Docling uses HuggingFace's transformers library under
+    # the hood, so weights land under data/cache/hf/ (not data/cache/docling/).
+    # Also honor the in-process flag set by the conversion module once a
+    # successful convert has run — that's the most authoritative signal.
+    try:
+        from backend.conversion import convert as _convert_mod
+        convert_flag = bool(getattr(_convert_mod, "_any_convert_succeeded", False))
+    except Exception:
+        convert_flag = False
+
+    def _nonempty(p: Path) -> bool:
+        try:
+            return p.exists() and any(p.iterdir())
+        except Exception:
+            return False
+
+    cache_has_content = (
+        _nonempty(_CACHE / "docling")
+        or _nonempty(_CACHE / "hf")
+        or _nonempty(_CACHE / "transformers")
+    )
+    model_ready = convert_flag or cache_has_content
 
     return Health(
         status="ok" if model_ready else "not_ready",

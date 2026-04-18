@@ -19,6 +19,11 @@ from typing import Any
 
 from backend.conversion.converter import convert_source, convert_source_mirrored
 
+# Module-level flag consumed by /health: flips True once any convert has
+# completed successfully. Gives the UI a definitive "models loaded, pipeline
+# verified end-to-end" signal rather than a cache-directory heuristic.
+_any_convert_succeeded: bool = False
+
 
 async def convert_doc(
     source_path: str | Path,
@@ -51,4 +56,10 @@ async def convert_doc(
         )
         return dict(outcome.meta or {})
 
-    return await asyncio.to_thread(_run)
+    meta = await asyncio.to_thread(_run)
+    # Flip the readiness flag on any "ok" outcome — failed conversions don't
+    # count, since they may fail for model-loading reasons.
+    if meta.get("status") == "ok":
+        global _any_convert_succeeded
+        _any_convert_succeeded = True
+    return meta

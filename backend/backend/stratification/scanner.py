@@ -269,9 +269,35 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+_EXCLUDED_DIRS: frozenset[str] = frozenset(
+    {
+        ".understanding",   # our own filemap dir
+        ".docling-out",     # our own default output dir
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        "node_modules",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".next",
+        ".nuxt",
+        ".turbo",
+        ".DS_Store",
+        ".idea",
+        ".vscode",
+    }
+)
+
+
 def _iter_files(root: Path, follow_symlinks: bool) -> list[Path]:
     out: list[Path] = []
-    for dirpath, _dirnames, filenames in os.walk(root, followlinks=follow_symlinks):
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=follow_symlinks):
+        # In-place filter — prevents descent into excluded dirs.
+        dirnames[:] = [d for d in dirnames if d not in _EXCLUDED_DIRS]
         for name in filenames:
             # Null-byte guard
             if "\x00" in name:

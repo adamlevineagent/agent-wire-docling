@@ -10,7 +10,7 @@ Frozen API and interface shapes. Every Wave 1/2 agent codes against these files;
 | [`vizdiff.ts`](./vizdiff.ts) | frontend Agent E | Agents E, F, G, H | `<VizDiff />` props + `SourceRenderer` interface + review action types. |
 | [`shortcuts.ts`](./shortcuts.ts) | frontend Agent D | Agents D, E, G, H | `useShortcutScope` hook API + default bindings per scope. |
 | [`docling-types.ts`](./docling-types.ts) | frontend | Agents E, F | Minimal DoclingDocument + Anchor shape. Isolates us from upstream Docling schema drift. |
-| [`design-tokens.ts`](./design-tokens.ts) | frontend Agent D | all frontend agents | Dark-first color palette, typography, spacing, component conventions. Imported into `tailwind.config.ts`. |
+| `../frontend/lib/design-tokens.ts` | frontend | all frontend agents | Dark-first color palette, typography, spacing, component conventions. Lives in frontend because Tailwind's config resolver can't import across repo boundaries. |
 | [`db-schema.sql`](./db-schema.sql) | backend Agent C | Agents A, B, C | SQLite DDL. Agent C owns migrations; A and B read against the committed schema. |
 
 ## Codegen

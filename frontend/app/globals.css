@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Dark-first body. No light-mode support in prototype. */
+html,
+body {
+  @apply bg-surface-0 text-fg-primary;
+  font-family: theme("fontFamily.sans");
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-variant-ligatures: common-ligatures;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+/* Scrollbars — tasteful, not pure chrome */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-surface-1;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-surface-3 rounded;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-surface-4;
+}
+
+/* Selection */
+::selection {
+  @apply bg-accent-muted text-fg-primary;
+}
+
+/* Keyboard badge */
+.kbd {
+  @apply inline-flex items-center justify-center px-1.5 py-0.5
+         text-xs font-mono text-fg-secondary
+         bg-surface-3 border border-border-default rounded;
+  min-width: 20px;
+}

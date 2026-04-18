@@ -1,0 +1,795 @@
+openapi: 3.1.0
+info:
+  title: agent-wire-docling
+  version: 0.1.0
+  description: |
+    HTTP API for the agent-wire-docling prototype. Single source of truth for
+    backend ↔ frontend. Frontend client is codegen'd from this file via
+    openapi-typescript. All agents code against this; any mid-build gap is
+    escalated, not silently edited.
+servers:
+  - url: http://localhost:8000
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tags
+
+tags:
+  - name: scan
+  - name: convert
+  - name: batch
+  - name: docs
+  - name: taste
+  - name: export
+  - name: system
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Paths
+
+paths:
+  /health:
+    get:
+      tags: [system]
+      summary: Health + readiness
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+  /scan:
+    post:
+      tags: [scan]
+      summary: Walk a folder, detect formats, cluster into strata
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScanRequest' }
+      responses:
+        '200':
+          description: Scan result with stratum breakdown
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScanResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /strata/sample:
+    post:
+      tags: [scan]
+      summary: Seeded, deterministic stratified sample pick
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SampleRequest' }
+      responses:
+        '200':
+          description: Sampled docs grouped by stratum
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SampleResult' }
+
+  /convert:
+    post:
+      tags: [convert]
+      summary: Convert a single doc with pipeline params, sync
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConvertRequest' }
+      responses:
+        '200':
+          description: Conversion complete
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocMeta' }
+        '422':
+          description: Parse error or convert failure
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /docs/{hash}:
+    get:
+      tags: [docs]
+      summary: Doc metadata by source_sha256
+      parameters:
+        - in: path
+          name: hash
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Doc meta
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocMeta' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /docs/{hash}/source:
+    get:
+      tags: [docs]
+      summary: Raw source bytes (octet-stream)
+      parameters:
+        - in: path
+          name: hash
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Source bytes with correct Content-Type
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+
+  /docs/{hash}/md:
+    get:
+      tags: [docs]
+      summary: Markdown export
+      parameters:
+        - in: path
+          name: hash
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Markdown body
+          content:
+            text/markdown:
+              schema: { type: string }
+
+  /docs/{hash}/json:
+    get:
+      tags: [docs]
+      summary: DoclingDocument JSON export
+      parameters:
+        - in: path
+          name: hash
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: DoclingDocument JSON
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DoclingDocument' }
+
+  /docs/{hash}/anchors:
+    get:
+      tags: [docs]
+      summary: Markdown ↔ DoclingDocument element map (sidecar)
+      parameters:
+        - in: path
+          name: hash
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Anchor map for bidirectional highlight
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Anchor' }
+
+  /docs/{hash}/rerun:
+    post:
+      tags: [docs]
+      summary: Re-convert a doc with different pipeline params
+      parameters:
+        - in: path
+          name: hash
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PipelineParams' }
+      responses:
+        '200':
+          description: New conversion complete
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocMeta' }
+
+  /batch:
+    post:
+      tags: [batch]
+      summary: Start a batch run using a stratum→pipeline map
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BatchRequest' }
+      responses:
+        '200':
+          description: Batch job accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+
+  /jobs/{id}:
+    get:
+      tags: [batch]
+      summary: Batch progress (1Hz poll cadence)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Current job state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+
+  /jobs/{id}/stream:
+    get:
+      tags: [batch]
+      summary: Live progress via Server-Sent Events (optional; polling is the fallback)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: text/event-stream of Job deltas
+          content:
+            text/event-stream: {}
+
+  /batch/{id}/cancel:
+    post:
+      tags: [batch]
+      summary: Stop claiming new jobs; finish in-flight; return final state
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Cancelled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+
+  /manifest:
+    get:
+      tags: [batch]
+      summary: Current manifest for the active output folder
+      parameters:
+        - in: query
+          name: output_dir
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Manifest
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Manifest' }
+
+  /taste_sessions:
+    post:
+      tags: [taste]
+      summary: Create a new taste session for a scanned folder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TasteSessionCreate' }
+      responses:
+        '200':
+          description: New session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TasteSession' }
+
+  /taste_sessions/{id}:
+    get:
+      tags: [taste]
+      summary: Rehydrate a session's full state
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Session state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TasteSession' }
+    patch:
+      tags: [taste]
+      summary: Update approvals / pipeline assignments / lock status
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TasteSessionPatch' }
+      responses:
+        '200':
+          description: Updated session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TasteSession' }
+
+  /export:
+    post:
+      tags: [export]
+      summary: Start an export job (manifest-only | manifest+md | full archive)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExportRequest' }
+      responses:
+        '200':
+          description: Export job accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+
+  /exports/{id}:
+    get:
+      tags: [export]
+      summary: Export job progress / result path
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Current export state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Components
+
+components:
+  responses:
+    BadRequest:
+      description: Request validation error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        detail: { type: string }
+
+    Health:
+      type: object
+      required: [status, docling_version, model_ready, tesseract_present, poppler_present]
+      properties:
+        status: { type: string, enum: [ok, degraded, not_ready] }
+        docling_version: { type: string }
+        model_ready: { type: boolean }
+        model_download_progress: { type: number, nullable: true, description: '0.0–1.0 during warmup' }
+        tesseract_present: { type: boolean }
+        poppler_present: { type: boolean }
+        free_disk_gb: { type: number }
+
+    # ── Scan / stratification
+
+    ScanRequest:
+      type: object
+      required: [folder]
+      properties:
+        folder: { type: string, description: 'Absolute local path' }
+        follow_symlinks: { type: boolean, default: false }
+        max_files: { type: integer, default: 50000 }
+
+    ScanResult:
+      type: object
+      required: [folder, total_files, strata, skipped, scan_id]
+      properties:
+        scan_id: { type: string }
+        folder: { type: string }
+        total_files: { type: integer }
+        strata:
+          type: array
+          items: { $ref: '#/components/schemas/Stratum' }
+        skipped:
+          type: array
+          items:
+            type: object
+            required: [path, reason]
+            properties:
+              path: { type: string }
+              reason: { type: string, description: 'e.g. "tier3_audio", "symlink_denied", "unreadable"' }
+
+    Stratum:
+      type: object
+      required: [name, size, sample_size_hint, example_paths]
+      properties:
+        name: { type: string, description: 'e.g. pdf-native-11-50, docx, xlsx' }
+        size: { type: integer }
+        sample_size_hint: { type: integer, description: 'min(N, size) — exhaustive if size ≤ 6' }
+        exhaustive: { type: boolean, description: 'true when size ≤ 6' }
+        example_paths:
+          type: array
+          items: { type: string }
+          description: 'First few filenames, for UI preview'
+
+    SampleRequest:
+      type: object
+      required: [scan_id, n]
+      properties:
+        scan_id: { type: string }
+        n: { type: integer, default: 5 }
+        seed: { type: integer, description: 'Optional; deterministic resampling' }
+        exclude_hashes:
+          type: array
+          items: { type: string }
+          description: 'Already-approved/rejected hashes to skip'
+
+    SampleResult:
+      type: object
+      required: [seed, strata]
+      properties:
+        seed: { type: integer }
+        strata:
+          type: array
+          items:
+            type: object
+            required: [name, docs]
+            properties:
+              name: { type: string }
+              docs:
+                type: array
+                items: { $ref: '#/components/schemas/DocRef' }
+
+    DocRef:
+      type: object
+      required: [source_sha256, source_path, source_format]
+      properties:
+        source_sha256: { type: string }
+        source_path: { type: string }
+        source_format: { type: string, description: 'pdf, docx, xlsx, pptx, html, txt, md, latex' }
+        size_bytes: { type: integer }
+        page_count: { type: integer, nullable: true }
+
+    # ── Convert / pipeline
+
+    PipelineParams:
+      type: object
+      properties:
+        ocr:
+          type: object
+          properties:
+            enabled: { type: boolean, default: true }
+            engine: { type: string, enum: [tesseract, rapidocr], default: tesseract }
+        vlm:
+          type: object
+          properties:
+            enabled: { type: boolean, default: false }
+            model: { type: string, default: 'granite_docling' }
+        tables:
+          type: object
+          properties:
+            enabled: { type: boolean, default: true }
+        enrichments:
+          type: object
+          properties:
+            formulas: { type: boolean, default: false }
+            code: { type: boolean, default: false }
+            charts: { type: boolean, default: false }
+
+    ConvertRequest:
+      type: object
+      required: [source_path]
+      properties:
+        source_path: { type: string }
+        output_dir: { type: string, description: 'Root dir; doc lands at output_dir/<hash>/' }
+        pipeline: { $ref: '#/components/schemas/PipelineParams' }
+
+    # ── Batch / jobs
+
+    BatchRequest:
+      type: object
+      required: [scan_id, output_dir, stratum_pipelines]
+      properties:
+        scan_id: { type: string }
+        output_dir: { type: string }
+        concurrency: { type: integer, default: 2 }
+        stratum_pipelines:
+          type: array
+          description: 'Per-stratum pipeline assignments from the locked taste session'
+          items:
+            type: object
+            required: [stratum, pipeline]
+            properties:
+              stratum: { type: string }
+              pipeline: { $ref: '#/components/schemas/PipelineParams' }
+
+    Job:
+      type: object
+      required: [id, kind, status, progress]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [batch, export] }
+        status: { type: string, enum: [queued, running, completed, cancelled, failed] }
+        progress:
+          type: object
+          properties:
+            docs_total: { type: integer }
+            docs_done: { type: integer }
+            docs_failed: { type: integer }
+            docs_per_sec: { type: number }
+            eta_seconds: { type: number, nullable: true }
+            per_stratum:
+              type: array
+              items:
+                type: object
+                properties:
+                  name: { type: string }
+                  total: { type: integer }
+                  done: { type: integer }
+                  failed: { type: integer }
+        started_at: { type: string, format: date-time, nullable: true }
+        completed_at: { type: string, format: date-time, nullable: true }
+        error: { type: string, nullable: true }
+        result_path: { type: string, nullable: true, description: 'For exports: path to artifact' }
+
+    # ── Per-doc meta & manifest
+
+    QualityBadge:
+      type: object
+      required: [page, kind]
+      properties:
+        page: { type: integer }
+        kind:
+          type: string
+          enum: [ocr_low, empty_page, table_warn, figure_missing, parse_warning]
+        value: { type: number, nullable: true, description: 'e.g. OCR conf 0.62' }
+        message: { type: string, nullable: true }
+
+    DocMeta:
+      type: object
+      required: [source_sha256, source_path, source_format, docling_version, pipeline_params, pipeline_hash, runtime_ms, status]
+      properties:
+        source_sha256: { type: string }
+        source_path: { type: string }
+        source_format: { type: string }
+        docling_version: { type: string }
+        pipeline_params: { $ref: '#/components/schemas/PipelineParams' }
+        pipeline_hash: { type: string, description: 'Hash of pipeline_params; differentiates rerun outputs' }
+        runtime_ms: { type: integer }
+        status: { type: string, enum: [ok, partial, error] }
+        error: { type: string, nullable: true }
+        stats:
+          type: object
+          properties:
+            page_count: { type: integer }
+            text_element_count: { type: integer }
+            table_count: { type: integer }
+            picture_count: { type: integer }
+            md_char_count: { type: integer }
+            json_size_bytes: { type: integer }
+        quality_signals:
+          type: object
+          properties:
+            ocr_confidence_per_page:
+              type: array
+              items: { type: number }
+            empty_pages:
+              type: array
+              items: { type: integer }
+            warnings:
+              type: array
+              items: { $ref: '#/components/schemas/QualityBadge' }
+        converted_at: { type: string, format: date-time }
+
+    Anchor:
+      type: object
+      description: 'Sidecar entry mapping MD byte range ↔ DoclingDocument element'
+      required: [self_ref, byte_start, byte_end, page, label]
+      properties:
+        self_ref: { type: string, description: 'e.g. "#/texts/42"' }
+        byte_start: { type: integer }
+        byte_end: { type: integer }
+        page: { type: integer }
+        label: { type: string, description: 'text, section_header, table, picture, list_item, etc.' }
+        bbox: { $ref: '#/components/schemas/BBox' }
+
+    BBox:
+      type: object
+      required: [l, t, r, b, coord_origin]
+      properties:
+        l: { type: number }
+        t: { type: number }
+        r: { type: number }
+        b: { type: number }
+        coord_origin: { type: string, enum: [BOTTOMLEFT, TOPLEFT] }
+
+    ManifestEntry:
+      type: object
+      required: [source_sha256, source_path, source_format, status, stratum, pipeline_hash]
+      properties:
+        source_sha256: { type: string }
+        source_path: { type: string }
+        source_format: { type: string }
+        status: { type: string, enum: [pending, processing, complete, error, skipped] }
+        stratum: { type: string }
+        pipeline_hash: { type: string }
+        error: { type: string, nullable: true }
+        quality_summary:
+          type: object
+          properties:
+            ocr_avg: { type: number, nullable: true }
+            warning_count: { type: integer }
+            empty_page_count: { type: integer }
+        converted_at: { type: string, format: date-time, nullable: true }
+
+    Manifest:
+      type: object
+      required: [schema_version, folder_root, output_dir, created_at, updated_at, docs]
+      properties:
+        schema_version: { type: integer, default: 1 }
+        folder_root: { type: string }
+        output_dir: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        docling_version: { type: string }
+        docs:
+          type: array
+          items: { $ref: '#/components/schemas/ManifestEntry' }
+
+    # ── Taste session
+
+    TasteSessionCreate:
+      type: object
+      required: [scan_id, output_dir]
+      properties:
+        scan_id: { type: string }
+        output_dir: { type: string }
+
+    DocApproval:
+      type: object
+      required: [source_sha256, status, reviewed_at]
+      properties:
+        source_sha256: { type: string }
+        status: { type: string, enum: [approved, rejected, skipped, flagged] }
+        notes: { type: string, nullable: true }
+        reviewed_at: { type: string, format: date-time }
+        pipeline_hash: { type: string, description: 'Pipeline under which this doc was reviewed' }
+
+    StratumState:
+      type: object
+      required: [name, size, pipeline, approvals, locked, status]
+      properties:
+        name: { type: string }
+        size: { type: integer }
+        pipeline: { $ref: '#/components/schemas/PipelineParams' }
+        approvals:
+          type: array
+          items: { $ref: '#/components/schemas/DocApproval' }
+        locked: { type: boolean }
+        status: { type: string, enum: [under_review, converged, non_convergent, exhausted] }
+
+    TasteSession:
+      type: object
+      required: [id, folder_root, output_dir, scan_id, strata, created_at, updated_at]
+      properties:
+        id: { type: string }
+        folder_root: { type: string }
+        output_dir: { type: string }
+        scan_id: { type: string }
+        strata:
+          type: array
+          items: { $ref: '#/components/schemas/StratumState' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        version: { type: integer, description: 'Monotonic; used for PATCH optimistic locking' }
+
+    TasteSessionPatch:
+      type: object
+      required: [version]
+      properties:
+        version: { type: integer, description: 'Current session version for CAS' }
+        approval:
+          type: object
+          description: 'Add or update an approval'
+          properties:
+            stratum: { type: string }
+            approval: { $ref: '#/components/schemas/DocApproval' }
+        pipeline_assignment:
+          type: object
+          description: 'Set a stratum pipeline'
+          properties:
+            stratum: { type: string }
+            pipeline: { $ref: '#/components/schemas/PipelineParams' }
+        lock_stratum:
+          type: object
+          description: 'Lock a stratum (commits pipeline for batch)'
+          properties:
+            stratum: { type: string }
+            locked: { type: boolean }
+
+    # ── Export
+
+    ExportRequest:
+      type: object
+      required: [output_dir, kind, destination]
+      properties:
+        output_dir: { type: string }
+        kind: { type: string, enum: [manifest_only, manifest_plus_md, full_archive] }
+        destination: { type: string, description: 'Absolute file or directory path' }
+
+    # ── DoclingDocument (minimal shape frontend consumes)
+
+    DoclingDocument:
+      type: object
+      description: |
+        Minimal surface the frontend uses; full schema is whatever
+        Docling 2.90.0 emits and is documented upstream.
+      properties:
+        schema_name: { type: string }
+        version: { type: string }
+        name: { type: string }
+        pages:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              page_no: { type: integer }
+              size:
+                type: object
+                properties:
+                  width: { type: number }
+                  height: { type: number }
+        texts:
+          type: array
+          items: { $ref: '#/components/schemas/DoclingItem' }
+        tables:
+          type: array
+          items: { $ref: '#/components/schemas/DoclingItem' }
+        pictures:
+          type: array
+          items: { $ref: '#/components/schemas/DoclingItem' }
+
+    DoclingItem:
+      type: object
+      properties:
+        self_ref: { type: string }
+        label: { type: string }
+        text: { type: string }
+        prov:
+          type: array
+          items: { $ref: '#/components/schemas/Provenance' }
+
+    Provenance:
+      type: object
+      properties:
+        page_no: { type: integer }
+        bbox: { $ref: '#/components/schemas/BBox' }
+        charspan:
+          type: array
+          items: { type: integer }
+          minItems: 2
+          maxItems: 2

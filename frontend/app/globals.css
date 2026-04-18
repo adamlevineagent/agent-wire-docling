@@ -2,21 +2,90 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Dark-first body. No light-mode support in prototype. */
-html,
-body {
-  @apply bg-surface-0 text-fg-primary;
-  font-family: theme("fontFamily.sans");
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  font-variant-ligatures: common-ligatures;
-}
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
 
+/* ── CSS custom properties mirroring design-tokens.ts
+   Components can use var(--s0), var(--cyan), etc. inline. */
 :root {
+  /* Surfaces */
+  --s0: #0b0d12;
+  --s1: #12151c;
+  --s2: #181c25;
+  --s3: #20252f;
+  --s4: #2a303c;
+
+  /* Foreground */
+  --fg0: #e8eaf0;
+  --fg1: #b3b8c4;
+  --fg2: #7a8090;
+  --fg3: #4a5060;
+
+  /* Borders */
+  --b0: #1c1f27;
+  --b1: #262b35;
+  --b2: #353b47;
+
+  /* Accents */
+  --cyan: #22d3ee;
+  --cyan-soft: rgba(34, 211, 238, 0.12);
+  --cyan-dim: rgba(34, 211, 238, 0.35);
+  --gold: #f0c040;
+  --gold-soft: rgba(240, 192, 64, 0.12);
+  --gold-dim: rgba(240, 192, 64, 0.4);
+
+  /* Functional */
+  --ok: #40d080;
+  --ok-soft: rgba(64, 208, 128, 0.12);
+  --warn: #f0a040;
+  --warn-soft: rgba(240, 160, 64, 0.12);
+  --danger: #f06060;
+  --danger-soft: rgba(240, 96, 96, 0.12);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.5);
+
   color-scheme: dark;
 }
 
-/* Scrollbars — tasteful, not pure chrome */
+html,
+body {
+  @apply bg-surface-0 text-fg-primary;
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-variant-ligatures: common-ligatures;
+  font-feature-settings:
+    "cv11",
+    "ss01",
+    "ss03";
+}
+
+/* Ambient radial glow — one subtle cyan wash from the top-left. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(
+    ellipse 800px 500px at 20% 0%,
+    rgba(34, 211, 238, 0.04) 0%,
+    transparent 60%
+  );
+}
+
+/* Ensure real content lifts above the glow */
+#__next,
+body > main,
+body > div {
+  position: relative;
+  z-index: 1;
+}
+
+/* Scrollbars */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -31,15 +100,43 @@ body {
   @apply bg-surface-4;
 }
 
-/* Selection */
 ::selection {
-  @apply bg-accent-muted text-fg-primary;
+  background: var(--cyan-soft);
+  color: var(--fg0);
 }
 
-/* Keyboard badge */
+/* Keyboard badge — kept as utility class for inline use */
 .kbd {
-  @apply inline-flex items-center justify-center px-1.5 py-0.5
-         text-xs font-mono text-fg-secondary
-         bg-surface-3 border border-border-default rounded;
-  min-width: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family:
+    "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--fg1);
+  background: var(--s2);
+  border: 1px solid var(--b1);
+  border-bottom-width: 2px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  min-width: 18px;
+}
+
+.mono {
+  font-family:
+    "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* label-eyebrow used across design */
+.label-eyebrow {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--fg2);
+  font-weight: 500;
 }

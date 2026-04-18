@@ -19,13 +19,27 @@ const config: Config = {
         warning: tokens.colors.warning,
         danger: tokens.colors.danger,
         info: tokens.colors.info,
+        ok: tokens.colors.ok,
+        cyan: {
+          DEFAULT: tokens.colors.accent.cyan,
+          soft: tokens.colors.accent["cyan-soft"],
+          dim: tokens.colors.accent["cyan-dim"],
+        },
+        gold: {
+          DEFAULT: tokens.colors.accent.gold,
+          soft: tokens.colors.accent["gold-soft"],
+          dim: tokens.colors.accent["gold-dim"],
+        },
       },
       fontFamily: {
         sans: [...tokens.fontFamily.sans],
         mono: [...tokens.fontFamily.mono],
       },
       fontSize: Object.fromEntries(
-        Object.entries(tokens.fontSize).map(([k, v]) => [k, [v[0], { lineHeight: v[1].lineHeight }]])
+        Object.entries(tokens.fontSize).map(([k, v]) => [
+          k,
+          [v[0], { lineHeight: v[1].lineHeight }],
+        ]),
       ),
       spacing: { ...tokens.spacing },
       borderRadius: { ...tokens.borderRadius },

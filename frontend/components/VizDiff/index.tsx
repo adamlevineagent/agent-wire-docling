@@ -25,6 +25,17 @@ import type { VizDiffProps as BaseVizDiffProps } from "./types";
 export interface VizDiffProps extends BaseVizDiffProps {
   /** Optional React tree to render inside the source pane host div. */
   sourceNode?: ReactNode;
+  /**
+   * Optional slot rendered *between* the source pane and the markdown pane.
+   * Used by the taste-test screen to embed a confidence gutter that is both a
+   * visual signal and a per-page navigator. Receives the current page and a
+   * `gotoPage` callback so the gutter can drive the reviewer.
+   */
+  middleSlot?: (ctx: {
+    currentPage: number;
+    totalPages: number;
+    gotoPage: (p: number) => void;
+  }) => ReactNode;
 }
 import type { MarkdownPaneHandle, OutputTab } from "./MarkdownPane";
 import { VIZDIFF_BINDINGS } from "./types";
@@ -55,6 +66,7 @@ export function VizDiff(props: VizDiffProps) {
     onPrev,
     shortcutScope,
     sourceNode,
+    middleSlot,
   } = props;
 
   const [tab, setTab] = useState<OutputTab>("rendered");
@@ -278,6 +290,9 @@ export function VizDiff(props: VizDiffProps) {
             sourceNode={sourceNode}
           />
         </div>
+
+        {/* Optional middle slot (confidence gutter) */}
+        {middleSlot && middleSlot({ currentPage, totalPages, gotoPage })}
 
         {/* Output (right) */}
         <div className="flex-1 flex flex-col min-w-0">

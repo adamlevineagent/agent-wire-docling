@@ -5,110 +5,210 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAppState } from "./app-state";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Card } from "../ui/card";
+import { Dot } from "../ui/dot";
+import { Kbd } from "../ui/kbd";
+import { PrismGlyph } from "./prism-glyph";
+import { FolderEntry } from "./folder-entry";
 import { api, type Filemap, type FiletreeNode } from "../../lib/api-client";
+
+// Stratum color palette — matches the spectrum bar design.
+const STRATUM_COLORS = [
+  "var(--gold)",
+  "var(--cyan)",
+  "#40d080",
+  "#a78bfa",
+  "#f08060",
+  "#b3b8c4",
+  "#ec4899",
+  "#6366f1",
+];
+
+function colorFor(i: number): string {
+  return STRATUM_COLORS[i % STRATUM_COLORS.length];
+}
+
+// Regex test helper — matches absolute-ish paths so empty-state flips correctly
+const looksAbsolute = (p: string) => p.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(p);
 
 export function ScanView() {
   const { scan, folder, setStage } = useAppState();
 
+  // Screen 1 — folder entry (prism glyph hero)
   if (!folder && !scan) {
-    return (
-      <EmptyState
-        title="Enter a folder path to begin"
-        detail="Paste an absolute path into the sidebar and press Validate. The scanner walks the folder, detects formats, and clusters files into strata."
-      />
-    );
+    return <FolderEntry />;
   }
 
   if (!scan) {
     return (
-      <EmptyState
-        title="Scan pending"
-        detail={`Press Validate for "${folder}" to see stratum breakdown.`}
-      />
+      <div className="h-full flex items-center justify-center p-8 relative">
+        <PrismGlyph />
+        <div className="relative z-[2] max-w-md text-center space-y-2">
+          <div className="label-eyebrow">Waiting on scan</div>
+          <div className="text-lg text-fg-primary font-medium">Scan pending</div>
+          <div className="text-sm text-fg-muted">
+            Validate{" "}
+            <span className="mono text-fg-secondary">{folder}</span> to see the
+            stratum breakdown.
+          </div>
+        </div>
+      </div>
     );
   }
 
+  // Screen 2 — scan results (spectrum bar + detail cards)
+  const strata = scan.strata ?? [];
+  const total = strata.reduce((n, s) => n + (s.size ?? 0), 0);
+
   return (
-    <div className="p-6 space-y-5 max-w-4xl">
-      <div>
-        <div className="text-xs uppercase tracking-wider text-fg-muted">
-          Scanned
-        </div>
-        <h1 className="text-lg font-semibold font-mono break-all">{scan.folder}</h1>
-        <div className="text-sm text-fg-secondary mt-1">
-          <span className="tabular-nums">{scan.total_files}</span> files ·{" "}
-          <span className="tabular-nums">{scan.strata.length}</span> strata ·{" "}
-          <span className="tabular-nums">{scan.skipped?.length ?? 0}</span> skipped
-        </div>
+    <div className="h-full flex flex-col min-h-0">
+      {/* Action bar at top */}
+      <div className="h-11 flex items-center gap-3 px-5 border-b border-border-subtle bg-surface-0">
+        <span className="label-eyebrow">Scan · step 1 of 3</span>
+        <span className="text-fg-disabled text-[11px]">·</span>
+        <span className="text-fg-muted text-[11.5px]">
+          Groups of docs that share a conversion pipeline
+        </span>
+        <div className="flex-1" />
+        <Button variant="ghost" size="sm">
+          Edit inclusions
+        </Button>
+        <Button variant="primary" size="sm" onClick={() => setStage("taste")}>
+          Continue to taste <Kbd>↵</Kbd>
+        </Button>
       </div>
 
-      <div className="space-y-2">
-        {scan.strata.map((s) => (
-          <div
-            key={s.name}
-            className="flex items-start gap-4 p-3 rounded border border-border-default bg-surface-1 hover:bg-surface-2"
-          >
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <div className="font-mono text-sm text-fg-primary">{s.name}</div>
-                {s.exhaustive && <Badge tone="info">exhaustive · size ≤ 6</Badge>}
-              </div>
-              <div className="text-xs text-fg-muted mt-0.5">
-                {s.size} files · sample hint {s.sample_size_hint}
-              </div>
-              {s.example_paths.length > 0 && (
-                <ul className="mt-1.5 space-y-0.5">
-                  {s.example_paths.slice(0, 3).map((p) => (
-                    <li
-                      key={p}
-                      className="text-xs font-mono text-fg-muted truncate"
-                      title={p}
-                    >
-                      {p}
-                    </li>
-                  ))}
-                  {s.example_paths.length > 3 && (
-                    <li className="text-xs text-fg-muted italic">
-                      + {s.example_paths.length - 3} more
-                    </li>
-                  )}
-                </ul>
-              )}
+      <div className="flex-1 overflow-auto p-7">
+        {/* Headline */}
+        <div className="mb-6">
+          <h1 className="text-[22px] font-semibold leading-tight tracking-tight">
+            <span className="num">{total.toLocaleString()}</span> documents,{" "}
+            <span className="num">{strata.length}</span> natural group
+            {strata.length === 1 ? "" : "s"}.
+          </h1>
+          <div className="text-sm text-fg-muted mt-1">
+            Each group gets its own conversion settings. You&apos;ll tune them
+            one by one in the next step.
+          </div>
+        </div>
+
+        {/* Spectrum bar — the novel moment */}
+        {strata.length > 0 && (
+          <div className="mb-9">
+            <div
+              className="h-11 flex gap-0.5 rounded overflow-hidden border border-border-subtle"
+            >
+              {strata.map((s, i) => (
+                <div
+                  key={s.name}
+                  className="relative"
+                  style={{
+                    flex: s.size || 1,
+                    background: colorFor(i),
+                    opacity: 0.85,
+                    minWidth: 14,
+                  }}
+                  title={`${s.name} · ${s.size}`}
+                >
+                  <div
+                    className="absolute inset-0"
+                    style={{
+                      background:
+                        "linear-gradient(180deg, rgba(255,255,255,0.15), rgba(0,0,0,0.1))",
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-0.5 mt-1.5">
+              {strata.map((s) => (
+                <div
+                  key={s.name}
+                  className="flex flex-col gap-px overflow-hidden"
+                  style={{ flex: s.size || 1, minWidth: 14 }}
+                >
+                  <span className="mono text-[10px] text-fg-muted leading-tight truncate">
+                    {s.name}
+                  </span>
+                  <span className="num text-[10.5px] text-fg-disabled">
+                    {s.size}
+                  </span>
+                </div>
+              ))}
             </div>
           </div>
-        ))}
-      </div>
+        )}
 
-      {scan.strata.length > 0 && (
-        <div className="pt-3 border-t border-border-default">
-          <Button variant="primary" onClick={() => setStage("taste")}>
-            Start taste test →
-          </Button>
-          <div className="text-xs text-fg-muted mt-2">
-            Or curate inclusion directly in the folder tree below.
-          </div>
+        {/* Detail cards */}
+        <div className="label-eyebrow mb-2.5">Detail</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+          {strata.map((s, i) => (
+            <Card key={s.name} className="p-4 flex gap-3.5">
+              <div
+                className="w-[3px] rounded-sm flex-shrink-0"
+                style={{ background: colorFor(i) }}
+              />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="mono text-[12.5px] text-fg-primary font-medium">
+                    {s.name}
+                  </span>
+                  {s.exhaustive && <Badge tone="cyan">exhaust</Badge>}
+                  <div className="flex-1" />
+                  <span className="num text-fg-muted text-[12px]">
+                    {s.size} docs
+                  </span>
+                </div>
+                {s.example_paths.length > 0 && (
+                  <div className="text-[12px] text-fg-muted truncate">
+                    {s.example_paths[0].split("/").pop()}
+                    {s.example_paths.length > 1 && (
+                      <span className="text-fg-disabled">
+                        {" "}
+                        · +{s.example_paths.length - 1} more
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </Card>
+          ))}
         </div>
-      )}
 
-      <FilemapTreePanel root={scan.folder} />
+        {/* Folder tree / filemap — collapsed below */}
+        <FilemapTreePanel root={scan.folder} />
 
-      {scan.skipped && scan.skipped.length > 0 && (
-        <details className="pt-3 border-t border-border-default">
-          <summary className="text-xs text-fg-muted cursor-pointer">
-            {scan.skipped.length} skipped files
-          </summary>
-          <ul className="mt-2 space-y-0.5 max-h-48 overflow-auto">
-            {scan.skipped.map((sk, i) => (
-              <li key={i} className="text-xs font-mono text-fg-muted">
-                <span className="text-warning-fg">{sk.reason}</span> {sk.path}
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
+        {/* Skipped */}
+        {scan.skipped && scan.skipped.length > 0 && (
+          <div className="mt-5 flex items-center gap-2.5 px-3.5 py-2.5 bg-surface-1 border border-border-subtle rounded-md">
+            <Dot />
+            <span className="text-fg-muted text-[12px]">
+              <span className="num text-fg-secondary">{scan.skipped.length}</span>{" "}
+              files skipped
+              <span className="text-fg-disabled mx-1.5">·</span>
+              <span className="mono">images, .DS_Store, .git/, &gt;100MB</span>
+            </span>
+            <div className="flex-1" />
+            <details>
+              <summary className="text-[11px] text-fg-muted hover:text-fg-primary cursor-pointer">
+                Review
+              </summary>
+              <div className="mt-2 max-h-48 overflow-auto space-y-0.5">
+                {scan.skipped.map((sk, i) => (
+                  <div key={i} className="text-[11px] mono text-fg-muted">
+                    <span className="text-warning">{sk.reason}</span> {sk.path}
+                  </div>
+                ))}
+              </div>
+            </details>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
+
+/* Filemap tree retained from prior impl — wiring is load-bearing */
 
 function FilemapTreePanel({ root }: { root: string }) {
   const q = useQuery<FiletreeNode>({
@@ -117,13 +217,16 @@ function FilemapTreePanel({ root }: { root: string }) {
     enabled: !!root,
   });
   if (q.isLoading) {
-    return <div className="text-xs text-fg-muted">Loading folder tree…</div>;
+    return (
+      <div className="text-xs text-fg-muted mt-5">Loading folder tree…</div>
+    );
   }
   if (q.error || !q.data) return null;
   return (
-    <details className="pt-3 border-t border-border-default" open>
-      <summary className="text-xs text-fg-muted cursor-pointer">
-        Folder tree · {q.data.counts?.included ?? 0}/{q.data.counts?.total ?? 0} included
+    <details className="mt-6 pt-4 border-t border-border-subtle">
+      <summary className="text-[11px] text-fg-muted cursor-pointer hover:text-fg-secondary">
+        Folder tree · {q.data.counts?.included ?? 0}/{q.data.counts?.total ?? 0}{" "}
+        included
       </summary>
       <div className="mt-2 font-mono text-xs space-y-0.5">
         <FilemapTreeNode node={q.data} depth={0} />
@@ -156,15 +259,14 @@ function FilemapTreeNode({ node, depth }: { node: FiletreeNode; depth: number })
           type="button"
           className="text-fg-muted hover:text-fg-primary w-4 text-center"
           onClick={() => setExpanded((v) => !v)}
-          title={expanded ? "Collapse" : "Expand"}
         >
           {expanded ? "▾" : "▸"}
         </button>
         <span className="text-fg-primary truncate">{name}/</span>
-        <Badge tone="info">
+        <Badge tone="cyan">
           {c.included}/{c.total}
         </Badge>
-        {c.pending > 0 && <Badge tone="warning">{c.pending} pending</Badge>}
+        {c.pending > 0 && <Badge tone="warn">{c.pending} pending</Badge>}
         {c.excluded > 0 && <Badge tone="neutral">{c.excluded} excluded</Badge>}
       </div>
       {expanded && hasFilemap && node.path && (
@@ -200,14 +302,13 @@ function FolderFiles({ folder, depth }: { folder: string; depth: number }) {
     ) => api.patchFilemap(folder, { files }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["filemap", folder] });
-      // Refresh the parent filetree counts.
       qc.invalidateQueries({ queryKey: ["filetree"] });
     },
   });
 
   if (q.isLoading)
     return (
-      <div className="text-fg-muted pl-4" style={{ paddingLeft: depth * 12 }}>
+      <div className="text-fg-muted" style={{ paddingLeft: depth * 12 }}>
         loading files…
       </div>
     );
@@ -255,15 +356,6 @@ function FolderFiles({ folder, depth }: { folder: string; depth: number }) {
       )}
       {files.map((f) => {
         const ui = f.user_included;
-        // tri-state: true=check, false=empty-explicit, null=indeterminate
-        const effective =
-          ui === true
-            ? "included"
-            : ui === false
-              ? "excluded"
-              : f.scanner_suggestion === "include"
-                ? "pending-include"
-                : "pending-exclude";
         const nextState: boolean | null =
           ui === true ? false : ui === false ? null : true;
         return (
@@ -280,13 +372,8 @@ function FolderFiles({ folder, depth }: { folder: string; depth: number }) {
                 if (el) el.indeterminate = ui == null;
               }}
               onChange={() =>
-                patchMut.mutate([
-                  { path: f.path, user_included: nextState },
-                ])
+                patchMut.mutate([{ path: f.path, user_included: nextState }])
               }
-              title={`click to cycle: ${effective} → ${
-                nextState === true ? "included" : nextState === false ? "excluded" : "pending"
-              }`}
             />
             <span className="truncate text-fg-primary" title={f.path}>
               {f.path}
@@ -294,10 +381,8 @@ function FolderFiles({ folder, depth }: { folder: string; depth: number }) {
             {f.detected_content_type && (
               <Badge tone="neutral">{f.detected_content_type}</Badge>
             )}
-            {f.detected_stratum && (
-              <Badge tone="info">{f.detected_stratum}</Badge>
-            )}
-            {ui === false && <Badge tone="warning">excluded</Badge>}
+            {f.detected_stratum && <Badge tone="cyan">{f.detected_stratum}</Badge>}
+            {ui === false && <Badge tone="warn">excluded</Badge>}
           </div>
         );
       })}
@@ -305,13 +390,5 @@ function FolderFiles({ folder, depth }: { folder: string; depth: number }) {
   );
 }
 
-function EmptyState({ title, detail }: { title: string; detail: string }) {
-  return (
-    <div className="h-full flex items-center justify-center p-8">
-      <div className="max-w-md text-center space-y-2">
-        <div className="text-lg text-fg-primary font-medium">{title}</div>
-        <div className="text-sm text-fg-muted">{detail}</div>
-      </div>
-    </div>
-  );
-}
+// Keep the symbol used elsewhere
+export { looksAbsolute };

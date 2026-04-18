@@ -13,6 +13,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { VizDiff } from "../VizDiff";
+import { ConfidenceGutter } from "../VizDiff/ConfidenceGutter";
 import { PdfRenderer } from "../Renderers/pdf";
 import { makeNoopRenderer } from "../Renderers/types";
 import { pickRenderer } from "../Renderers";
@@ -257,6 +258,14 @@ export function Reviewer(props: ReviewerProps) {
           doc={doc}
           sourceRenderer={rendererRef.current}
           sourceNode={sourceNode}
+          middleSlot={({ currentPage, totalPages, gotoPage }) => (
+            <ConfidenceGutter
+              badges={doc.qualityBadges ?? []}
+              totalPages={totalPages}
+              currentPage={currentPage}
+              gotoPage={gotoPage}
+            />
+          )}
           currentPipeline={pipeline}
           shortcutScope="tastetest"
           onApprove={(d) => submit("approved", d.notes)}

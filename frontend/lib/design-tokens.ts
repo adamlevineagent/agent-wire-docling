@@ -1,83 +1,91 @@
 /**
- * Design tokens — frozen in pre-flight P2.
+ * Design tokens — Wire-sibling palette (2026-04-18 redesign pass).
  *
- * Dark-first. Tastefully dense. Reference points: GitHub PR review UI,
- * Linear, Raycast. Not Slack, not Notion.
+ * Source of truth: Claude Design handoff `agent-wire-com-corpus-ingest-prototype`
+ * (project/styles.css). Dark-first, restrained cyan + gold accents, warmer-than-
+ * Wire-but-cooler-than-GitHub surfaces. 13px base, Inter + JetBrains Mono.
  *
- * Agent D imports this into frontend/tailwind.config.ts. All frontend agents
- * use the semantic names (e.g. `bg-surface-1`, `text-fg-muted`), not raw colors.
+ * Agent D imports this into tailwind.config.ts. Consumers should use the
+ * semantic names (`bg-surface-1`, `text-fg-secondary`, `text-accent-cyan`) not
+ * raw hex values.
  */
 
 export const tokens = {
-  // ── Colors (dark-first)
-  //
-  // Palette: warm near-black surfaces, cool-tinted foregrounds, one signature
-  // accent (amber), functional colors for state. No pure black, no pure white.
-
   colors: {
-    // Surfaces: darker → lighter as you go up the stack
+    // Surfaces — warmer-than-Wire, cooler-than-GitHub
     surface: {
-      0: "#0b0c0f", // app background (body)
-      1: "#121419", // panel (sidebar, main pane)
-      2: "#191c23", // elevated card
-      3: "#232832", // hover / active
-      4: "#2c3340", // input / code block
+      0: "#0b0d12", // deepest — window chrome / body
+      1: "#12151c", // panels, sidebar
+      2: "#181c25", // raised card
+      3: "#20252f", // hover
+      4: "#2a303c", // input, code block
     },
 
-    // Foreground / text
+    // Foreground
     fg: {
-      primary: "#e6e8ee", // main text
-      secondary: "#b5bac5", // secondary text, sub-labels
-      muted: "#7d838f", // captions, placeholders
-      disabled: "#4c525c",
-      inverse: "#0b0c0f", // text on accent
+      primary: "#e8eaf0",
+      secondary: "#b3b8c4",
+      muted: "#7a8090",
+      disabled: "#4a5060",
+      inverse: "#001018",
     },
 
-    // Borders / dividers
+    // Borders
     border: {
-      subtle: "#1e2128",
-      default: "#2a2e37",
-      strong: "#3a4050",
-      focus: "#d69f32", // matches accent
+      subtle: "#1c1f27",
+      default: "#262b35",
+      strong: "#353b47",
+      focus: "#22d3ee", // cyan focus
     },
 
-    // Accent (signature): amber — matches keyboard-first diff-viewer aesthetic
+    // Accents — Wire cyan (signature) + Wire gold (tertiary)
     accent: {
-      DEFAULT: "#d69f32",
-      hover: "#e3ae41",
-      muted: "#6a4e18",
-      fg: "#0b0c0f",
+      // Default accent = cyan (primary buttons, focus, "active" cues)
+      DEFAULT: "#22d3ee",
+      hover: "#4ddcf1",
+      muted: "rgba(34, 211, 238, 0.12)",
+      dim: "rgba(34, 211, 238, 0.35)",
+      fg: "#001018",
+      // Named aliases (accent.cyan / accent.gold)
+      cyan: "#22d3ee",
+      "cyan-soft": "rgba(34, 211, 238, 0.12)",
+      "cyan-dim": "rgba(34, 211, 238, 0.35)",
+      gold: "#f0c040",
+      "gold-soft": "rgba(240, 192, 64, 0.12)",
+      "gold-dim": "rgba(240, 192, 64, 0.4)",
     },
 
     // Functional
     success: {
-      DEFAULT: "#46a86f",
-      bg: "#18301f",
-      fg: "#8ddea9",
+      DEFAULT: "#40d080",
+      bg: "rgba(64, 208, 128, 0.12)",
+      fg: "#40d080",
     },
     warning: {
-      DEFAULT: "#d1973b",
-      bg: "#3a2a0f",
-      fg: "#ead7a2",
+      DEFAULT: "#f0a040",
+      bg: "rgba(240, 160, 64, 0.12)",
+      fg: "#f0a040",
     },
     danger: {
-      DEFAULT: "#d24a4a",
-      bg: "#3a1414",
-      fg: "#f1a0a0",
+      DEFAULT: "#f06060",
+      bg: "rgba(240, 96, 96, 0.12)",
+      fg: "#f06060",
     },
     info: {
-      DEFAULT: "#5792d4",
-      bg: "#16253a",
-      fg: "#a8caec",
+      DEFAULT: "#22d3ee", // map info → cyan for legacy callers
+      bg: "rgba(34, 211, 238, 0.12)",
+      fg: "#22d3ee",
+    },
+    ok: {
+      DEFAULT: "#40d080",
+      soft: "rgba(64, 208, 128, 0.12)",
     },
   },
 
-  // ── Typography
-
   fontFamily: {
     sans: [
-      "InterVariable",
       "Inter",
+      "InterVariable",
       "system-ui",
       "-apple-system",
       "Segoe UI",
@@ -95,20 +103,17 @@ export const tokens = {
   },
 
   fontSize: {
-    // 13px base (denser than web-default 16px)
-    xs: ["11px", { lineHeight: "16px" }],
-    sm: ["12px", { lineHeight: "18px" }],
+    xs: ["10px", { lineHeight: "14px" }],
+    sm: ["11px", { lineHeight: "16px" }],
     base: ["13px", { lineHeight: "20px" }],
     md: ["14px", { lineHeight: "22px" }],
     lg: ["16px", { lineHeight: "24px" }],
     xl: ["18px", { lineHeight: "26px" }],
     "2xl": ["22px", { lineHeight: "30px" }],
+    "3xl": ["26px", { lineHeight: "32px" }],
   },
 
-  // ── Spacing / radii / shadows
-
   spacing: {
-    // 4px grid
     px: "1px",
     "0.5": "2px",
     1: "4px",
@@ -131,39 +136,23 @@ export const tokens = {
     md: "6px",
     lg: "8px",
     xl: "12px",
+    full: "9999px",
   },
 
   boxShadow: {
-    sm: "0 1px 2px 0 rgb(0 0 0 / 0.3)",
-    DEFAULT: "0 2px 6px -1px rgb(0 0 0 / 0.35), 0 1px 2px -1px rgb(0 0 0 / 0.35)",
-    md: "0 4px 10px -2px rgb(0 0 0 / 0.4), 0 2px 4px -1px rgb(0 0 0 / 0.3)",
-    focus: "0 0 0 2px rgb(214 159 50 / 0.5)",
+    sm: "0 1px 2px rgba(0,0,0,0.35)",
+    DEFAULT: "0 4px 16px rgba(0,0,0,0.35)",
+    md: "0 4px 16px rgba(0,0,0,0.35)",
+    lg: "0 12px 40px rgba(0,0,0,0.5)",
+    focus: "0 0 0 2px rgba(34, 211, 238, 0.35)",
+    "glow-cyan": "0 0 6px rgba(34, 211, 238, 0.35)",
+    "glow-gold": "0 0 6px rgba(240, 192, 64, 0.4)",
   },
 
-  // ── Component-level conventions (consumed directly by component code)
-
   components: {
-    // Keyboard shortcut badge: monospace, muted, small
-    kbd: {
-      padX: "6px",
-      padY: "2px",
-      radius: "4px",
-      bg: "surface.3",
-      fg: "fg.secondary",
-      border: "border.default",
-    },
-    // Source/output panes
-    pane: {
-      minWidthPx: 360,
-      resizerWidthPx: 4,
-      headerHeightPx: 40,
-    },
-    // Quality badge pill on source render
-    qualityBadge: {
-      radius: "4px",
-      padX: "6px",
-      padY: "1px",
-    },
+    kbd: { padX: "5px", padY: "2px", radius: "4px" },
+    pane: { minWidthPx: 360, resizerWidthPx: 4, headerHeightPx: 32 },
+    qualityBadge: { radius: "3px", padX: "7px", padY: "3px" },
   },
 } as const;
 

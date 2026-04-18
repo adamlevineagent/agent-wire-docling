@@ -30,7 +30,7 @@ Status: `proposed` | `accepted` | `rejected` | `resolved` (later lifted)
 
 ## Added during Wave 1
 
-(none yet)
+- [accepted] [Wave 1 / Agent B] **PDF stratification degrades when poppler-utils is missing.** — Without `pdfinfo`/`pdftotext`, `/scan` can't distinguish native-text from scanned PDFs and can't determine page counts. All PDFs collapse into a single `pdf` stratum (or `pdf-unknown-{bin}` if page counts become available via another path later). Response includes `poppler_missing: true` so the frontend can surface an install hint. User impact: on a machine without poppler, the taste-test loses per-stratum fidelity for PDFs — reviewer must eyeball native vs scanned themselves and iterate once per whole-PDF bucket. Follow-up: `scripts/start.sh` should block launch until `brew install poppler` (already seeded in pre-flight deferral ledger).
 
 ## Added during Wave 2
 

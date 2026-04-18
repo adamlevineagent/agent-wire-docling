@@ -6,22 +6,12 @@
  */
 
 import { TasteTest } from "../TasteTest";
+import { BatchRun } from "../BatchRun";
 
 export function TasteTestSlot() {
   return <TasteTest />;
 }
 
 export function BatchRunSlot() {
-  return (
-    <div className="h-full flex items-center justify-center p-8">
-      <div className="max-w-md text-center space-y-2">
-        <div className="text-lg text-fg-primary font-medium">
-          Batch run
-        </div>
-        <div className="text-sm text-fg-muted">
-          Approve at least one stratum in Taste before running a batch. Wave 2 Agent H will flesh this out.
-        </div>
-      </div>
-    </div>
-  );
+  return <BatchRun />;
 }

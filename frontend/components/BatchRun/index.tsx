@@ -23,6 +23,7 @@ import { useAppState } from "../shell/app-state";
 import { PreLaunch } from "./PreLaunch";
 import { LiveProgress } from "./LiveProgress";
 import { PostRun } from "./PostRun";
+import { PostRunTriage } from "./PostRunTriage";
 import { ExportDropdown } from "./ExportDropdown";
 import { sessionStore } from "./session-store";
 import { useToast } from "../ui/toast";
@@ -36,6 +37,7 @@ export function BatchRun() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [finalJob, setFinalJob] = useState<Job | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [showLegacyOutliers, setShowLegacyOutliers] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
@@ -156,7 +158,6 @@ export function BatchRun() {
   }
 
   const session = sessionQ.data!;
-  const anyLocked = session.strata.some((s) => s.locked);
 
   // Job active → live progress
   if (jobId && !finalJob) {
@@ -179,16 +180,26 @@ export function BatchRun() {
     );
   }
 
-  // Job finalised → post-run review
+  // Job finalised → post-run review (triage-first, legacy outliers as fallback)
   if (finalJob) {
     return (
       <>
-        <PostRun
-          job={finalJob}
-          outputDir={outputDir}
-          onRequestExport={() => setExportOpen(true)}
-          onStartOver={startOver}
-        />
+        {showLegacyOutliers ? (
+          <PostRun
+            job={finalJob}
+            outputDir={outputDir}
+            onRequestExport={() => setExportOpen(true)}
+            onStartOver={startOver}
+          />
+        ) : (
+          <PostRunTriage
+            job={finalJob}
+            outputDir={outputDir}
+            onRequestExport={() => setExportOpen(true)}
+            onStartOver={startOver}
+            onShowOutliers={() => setShowLegacyOutliers(true)}
+          />
+        )}
         {outputDir && (
           <ExportDropdown
             outputDir={outputDir}
@@ -200,16 +211,7 @@ export function BatchRun() {
     );
   }
 
-  // Session exists, no job → pre-launch
-  if (!anyLocked) {
-    return (
-      <EmptyState
-        title="Lock a stratum in Taste first"
-        detail="BatchRun needs at least one locked stratum to commit a pipeline. Open the Taste stage and press 'Lock'."
-      />
-    );
-  }
-
+  // Session exists, no job → pre-launch (filemap-mode or legacy)
   return (
     <PreLaunch
       session={session}

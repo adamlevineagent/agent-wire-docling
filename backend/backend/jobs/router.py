@@ -89,6 +89,17 @@ class TriageRetryRequest(BaseModel):
     output_dir: str
 
 
+class TriageFailureEdit(BaseModel):
+    source_sha256: str
+    retry_with_pipeline: dict[str, Any] | None = None
+    mark_as_excluded: bool | None = None
+    notes: str | None = None
+
+
+class TriagePatchRequest(BaseModel):
+    failures: list[TriageFailureEdit] = Field(default_factory=list)
+
+
 class TasteSessionCreate(BaseModel):
     scan_id: str
     output_dir: str
@@ -205,6 +216,17 @@ async def get_triage(output_dir: str = Query(...)) -> dict[str, Any]:
 async def retry_triage(req: TriageRetryRequest) -> dict[str, Any]:
     try:
         return _triage.apply_triage_retries(req.output_dir)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.patch("/triage")
+async def patch_triage(
+    req: TriagePatchRequest, output_dir: str = Query(...)
+) -> dict[str, Any]:
+    try:
+        edits = [e.model_dump(exclude_none=True) for e in req.failures]
+        return _triage.patch_triage(output_dir, edits)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 

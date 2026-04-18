@@ -150,6 +150,19 @@ export const api = {
     request<FiletreeNode>(`/filetree?root=${encodeURIComponent(root)}`),
   triage: (outputDir: string) =>
     request<Triage>(`/triage?output_dir=${encodeURIComponent(outputDir)}`),
+  patchTriage: (
+    outputDir: string,
+    failures: Array<{
+      source_sha256: string;
+      retry_with_pipeline?: PipelineParams | null;
+      mark_as_excluded?: boolean;
+      notes?: string | null;
+    }>,
+  ) =>
+    request<Triage>(`/triage?output_dir=${encodeURIComponent(outputDir)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ failures }),
+    }),
   retryTriage: (outputDir: string) =>
     request<{ retried: number; succeeded: number; still_failed: number; excluded: number }>(
       "/triage/retry",

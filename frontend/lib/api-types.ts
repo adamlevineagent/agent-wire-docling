@@ -260,7 +260,43 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Merge per-failure user edits (retry_with_pipeline / mark_as_excluded / notes) */
+        patch: {
+            parameters: {
+                query: {
+                    output_dir: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        failures: {
+                            source_sha256: string;
+                            retry_with_pipeline?: {
+                                [key: string]: unknown;
+                            } | null;
+                            mark_as_excluded?: boolean | null;
+                            notes?: string | null;
+                        }[];
+                    };
+                };
+            };
+            responses: {
+                /** @description Updated triage doc */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Triage"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
         trace?: never;
     };
     "/triage/retry": {

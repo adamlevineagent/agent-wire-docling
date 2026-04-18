@@ -1,10 +1,11 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAppState } from "./app-state";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { api, type FiletreeNode } from "../../lib/api-client";
+import { api, type Filemap, type FiletreeNode } from "../../lib/api-client";
 
 export function ScanView() {
   const { scan, folder, setStage } = useAppState();
@@ -84,7 +85,7 @@ export function ScanView() {
             Start taste test →
           </Button>
           <div className="text-xs text-fg-muted mt-2">
-            Wave 2 Agent G wires this to <code className="font-mono">POST /taste_sessions</code>.
+            Or curate inclusion directly in the folder tree below.
           </div>
         </div>
       )}
@@ -132,6 +133,7 @@ function FilemapTreePanel({ root }: { root: string }) {
 }
 
 function FilemapTreeNode({ node, depth }: { node: FiletreeNode; depth: number }) {
+  const [expanded, setExpanded] = useState(depth === 0);
   const name =
     node.folder_relative && node.folder_relative !== ""
       ? node.folder_relative.split("/").pop()
@@ -143,25 +145,162 @@ function FilemapTreeNode({ node, depth }: { node: FiletreeNode; depth: number })
     excluded: counts.excluded ?? 0,
     total: counts.total ?? 0,
   };
+  const hasFilemap = !!node.filemap;
   return (
     <div>
       <div
         className="flex items-center gap-2 py-0.5"
         style={{ paddingLeft: depth * 12 }}
       >
+        <button
+          type="button"
+          className="text-fg-muted hover:text-fg-primary w-4 text-center"
+          onClick={() => setExpanded((v) => !v)}
+          title={expanded ? "Collapse" : "Expand"}
+        >
+          {expanded ? "▾" : "▸"}
+        </button>
         <span className="text-fg-primary truncate">{name}/</span>
         <Badge tone="info">
           {c.included}/{c.total}
         </Badge>
-        {c.excluded > 0 && <Badge tone="warning">{c.excluded} excluded</Badge>}
+        {c.pending > 0 && <Badge tone="warning">{c.pending} pending</Badge>}
+        {c.excluded > 0 && <Badge tone="neutral">{c.excluded} excluded</Badge>}
       </div>
-      {(node.children || []).map((child) => (
-        <FilemapTreeNode
-          key={child.path}
-          node={child}
-          depth={depth + 1}
-        />
-      ))}
+      {expanded && hasFilemap && node.path && (
+        <FolderFiles folder={node.path} depth={depth + 1} />
+      )}
+      {expanded &&
+        (node.children || []).map((child) => (
+          <FilemapTreeNode key={child.path} node={child} depth={depth + 1} />
+        ))}
+    </div>
+  );
+}
+
+interface FilemapFileEntry {
+  path: string;
+  detected_content_type?: string;
+  detected_stratum?: string | null;
+  scanner_suggestion?: string;
+  user_included?: boolean | null;
+}
+
+function FolderFiles({ folder, depth }: { folder: string; depth: number }) {
+  const qc = useQueryClient();
+  const q = useQuery<Filemap>({
+    queryKey: ["filemap", folder],
+    queryFn: () => api.filemap(folder),
+    enabled: !!folder,
+  });
+
+  const patchMut = useMutation({
+    mutationFn: async (
+      files: Array<{ path: string; user_included: boolean | null }>,
+    ) => api.patchFilemap(folder, { files }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["filemap", folder] });
+      // Refresh the parent filetree counts.
+      qc.invalidateQueries({ queryKey: ["filetree"] });
+    },
+  });
+
+  if (q.isLoading)
+    return (
+      <div className="text-fg-muted pl-4" style={{ paddingLeft: depth * 12 }}>
+        loading files…
+      </div>
+    );
+  if (q.error || !q.data) return null;
+
+  const files = ((q.data as unknown as { files?: FilemapFileEntry[] }).files ??
+    []) as FilemapFileEntry[];
+  if (files.length === 0) return null;
+
+  const pendingPaths = files
+    .filter((f) => f.user_included == null)
+    .map((f) => f.path);
+
+  return (
+    <div>
+      {pendingPaths.length > 0 && (
+        <div
+          className="flex items-center gap-2 py-0.5 text-fg-muted"
+          style={{ paddingLeft: depth * 12 }}
+        >
+          <button
+            type="button"
+            className="underline hover:text-fg-primary"
+            onClick={() =>
+              patchMut.mutate(
+                pendingPaths.map((p) => ({ path: p, user_included: true })),
+              )
+            }
+          >
+            include all pending
+          </button>
+          <span>·</span>
+          <button
+            type="button"
+            className="underline hover:text-fg-primary"
+            onClick={() =>
+              patchMut.mutate(
+                pendingPaths.map((p) => ({ path: p, user_included: false })),
+              )
+            }
+          >
+            exclude all pending
+          </button>
+        </div>
+      )}
+      {files.map((f) => {
+        const ui = f.user_included;
+        // tri-state: true=check, false=empty-explicit, null=indeterminate
+        const effective =
+          ui === true
+            ? "included"
+            : ui === false
+              ? "excluded"
+              : f.scanner_suggestion === "include"
+                ? "pending-include"
+                : "pending-exclude";
+        const nextState: boolean | null =
+          ui === true ? false : ui === false ? null : true;
+        return (
+          <div
+            key={f.path}
+            className="flex items-center gap-2 py-0.5"
+            style={{ paddingLeft: depth * 12 }}
+          >
+            <input
+              type="checkbox"
+              className="h-3 w-3"
+              checked={ui === true}
+              ref={(el) => {
+                if (el) el.indeterminate = ui == null;
+              }}
+              onChange={() =>
+                patchMut.mutate([
+                  { path: f.path, user_included: nextState },
+                ])
+              }
+              title={`click to cycle: ${effective} → ${
+                nextState === true ? "included" : nextState === false ? "excluded" : "pending"
+              }`}
+            />
+            <span className="truncate text-fg-primary" title={f.path}>
+              {f.path}
+            </span>
+            {f.detected_content_type && (
+              <Badge tone="neutral">{f.detected_content_type}</Badge>
+            )}
+            {f.detected_stratum && (
+              <Badge tone="info">{f.detected_stratum}</Badge>
+            )}
+            {ui === false && <Badge tone="warning">excluded</Badge>}
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -177,7 +177,7 @@ async def _process_filemap_doc(
             "converted_at": last_attempt,
             "output_path": output_path,
         }
-        append_manifest_entry(output_dir, manifest_entry)
+        append_manifest_entry(output_dir, manifest_entry, folder_root=output_root)
     except Exception as e:
         q.log_event(job_id, {"event": "manifest_write_fail", "error": str(e)})
 

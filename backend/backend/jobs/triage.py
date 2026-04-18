@@ -122,6 +122,32 @@ def _write(output_dir: Path, doc: dict[str, Any]) -> None:
     os.replace(tmp, final)
 
 
+def patch_triage(output_dir: Path | str, edits: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge user edits into triage.yaml failures by source_sha256.
+
+    Each edit dict: { source_sha256, retry_with_pipeline?, mark_as_excluded?, notes? }.
+    Returns the updated triage doc.
+    """
+    output_dir = Path(output_dir)
+    doc = read_triage(output_dir)
+    if doc is None:
+        raise FileNotFoundError(f"no triage.yaml at {output_dir}")
+    by_sha = {e.get("source_sha256"): e for e in (edits or []) if e.get("source_sha256")}
+    for failure in doc.get("failures") or []:
+        sha = failure.get("source_sha256")
+        if not sha or sha not in by_sha:
+            continue
+        edit = by_sha[sha]
+        if "retry_with_pipeline" in edit:
+            failure["retry_with_pipeline"] = edit["retry_with_pipeline"]
+        if "mark_as_excluded" in edit:
+            failure["mark_as_excluded"] = bool(edit["mark_as_excluded"])
+        if "notes" in edit:
+            failure["notes"] = edit["notes"]
+    _write(output_dir, doc)
+    return doc
+
+
 def apply_triage_retries(output_dir: Path | str) -> dict[str, Any]:
     """Process the triage file: retry failures marked with `retry_with_pipeline`,
     and exclude failures marked `mark_as_excluded: true`.

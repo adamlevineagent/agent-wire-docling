@@ -172,6 +172,45 @@ export function Reviewer(props: ReviewerProps) {
       await onDecision({
         approval: { stratum: stratumName, approval },
       });
+      // Dual-write to filemap so the new Level B batch path sees the decision.
+      // Best-effort: surface errors as a toast only; taste_sessions PATCH above
+      // remains the authoritative write for now.
+      try {
+        const sp = doc.source_path || meta.source_path;
+        if (sp) {
+          const lastSlash = sp.lastIndexOf("/");
+          if (lastSlash > 0) {
+            const folder = sp.slice(0, lastSlash);
+            const basename = sp.slice(lastSlash + 1);
+            let user_included: boolean | null | undefined;
+            let user_notes: string | null | undefined;
+            if (status === "approved") user_included = true;
+            else if (status === "rejected") user_included = false;
+            else if (status === "flagged") {
+              user_included = true;
+              user_notes = notes ? `flagged: ${notes}` : "flagged";
+            }
+            // skipped → leave user_included untouched
+            if (user_included !== undefined || user_notes !== undefined) {
+              await api.patchFilemap(folder, {
+                files: [
+                  {
+                    path: basename,
+                    ...(user_included !== undefined ? { user_included } : {}),
+                    ...(user_notes !== undefined ? { user_notes } : {}),
+                  },
+                ],
+              });
+            }
+          }
+        }
+      } catch (e) {
+        toast.push({
+          kind: "warning",
+          title: "Filemap sync failed",
+          detail: e instanceof Error ? e.message : String(e),
+        });
+      }
       onAdvance();
     } catch {
       // toast already surfaced in session hook

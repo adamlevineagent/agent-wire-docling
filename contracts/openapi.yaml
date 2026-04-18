@@ -138,6 +138,42 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Triage' }
         '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [batch]
+      summary: Merge per-failure user edits (retry_with_pipeline / mark_as_excluded / notes)
+      parameters:
+        - in: query
+          name: output_dir
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [failures]
+              properties:
+                failures:
+                  type: array
+                  items:
+                    type: object
+                    required: [source_sha256]
+                    properties:
+                      source_sha256: { type: string }
+                      retry_with_pipeline:
+                        type: object
+                        nullable: true
+                        additionalProperties: true
+                      mark_as_excluded: { type: boolean, nullable: true }
+                      notes: { type: string, nullable: true }
+      responses:
+        '200':
+          description: Updated triage doc
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Triage' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /triage/retry:
     post:

@@ -13,8 +13,19 @@
  *   └───────────────────────────┴─────────────────────────────────┘
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { VizDiffProps } from "./types";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { VizDiffProps as BaseVizDiffProps } from "./types";
+
+/**
+ * Extended props: allow callers to mount an arbitrary React subtree as the
+ * source preview (Agent F's per-format renderers are React components). The
+ * class-based `sourceRenderer` (Agent E's PDF style) still works as before via
+ * duck-typed mount(). See CRITICAL FIX in Wave 2b audit.
+ */
+export interface VizDiffProps extends BaseVizDiffProps {
+  /** Optional React tree to render inside the source pane host div. */
+  sourceNode?: ReactNode;
+}
 import type { MarkdownPaneHandle, OutputTab } from "./MarkdownPane";
 import { VIZDIFF_BINDINGS } from "./types";
 import { MarkdownPane } from "./MarkdownPane";
@@ -43,6 +54,7 @@ export function VizDiff(props: VizDiffProps) {
     onNext,
     onPrev,
     shortcutScope,
+    sourceNode,
   } = props;
 
   const [tab, setTab] = useState<OutputTab>("rendered");
@@ -263,6 +275,7 @@ export function VizDiff(props: VizDiffProps) {
             sourceRenderer={sourceRenderer}
             page={currentPage}
             onPageChange={(p) => setCurrentPage(p)}
+            sourceNode={sourceNode}
           />
         </div>
 
@@ -310,10 +323,12 @@ function SourceSlot({
   sourceRenderer,
   page,
   onPageChange,
+  sourceNode,
 }: {
   sourceRenderer: import("./types").SourceRenderer;
   page: number;
   onPageChange: (p: number) => void;
+  sourceNode?: ReactNode;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
 
@@ -358,9 +373,13 @@ function SourceSlot({
       }}
     >
       {/* Renderer mounts into this div; if it doesn't (stub), show a hint */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-fg-muted text-xs font-mono vizdiff-source-placeholder">
-        [source renderer — page {page}]
-      </div>
+      {sourceNode ? (
+        sourceNode
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-fg-muted text-xs font-mono vizdiff-source-placeholder">
+          [source renderer — page {page}]
+        </div>
+      )}
     </div>
   );
 }

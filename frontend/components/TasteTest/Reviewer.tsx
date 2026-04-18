@@ -15,6 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { VizDiff } from "../VizDiff";
 import { PdfRenderer } from "../Renderers/pdf";
 import { makeNoopRenderer } from "../Renderers/types";
+import { pickRenderer } from "../Renderers";
 import type {
   Anchor,
   PipelineParams,
@@ -61,7 +62,11 @@ export function Reviewer(props: ReviewerProps) {
   const anchors = data?.doc.anchors ?? ([] as Anchor[]);
   const doclingDoc = data?.doc.doclingDoc ?? null;
 
-  // Build renderer for current hash + format.
+  const fmt = (data?.doc.source_format ?? "").toLowerCase();
+  const isPdf = fmt === "pdf";
+
+  // Build renderer for PDF eagerly (class-based). For non-PDF formats we let
+  // the React renderer component (below) register the renderer via onRenderer.
   useEffect(() => {
     if (!data) {
       rendererRef.current?.dispose?.();
@@ -71,19 +76,21 @@ export function Reviewer(props: ReviewerProps) {
     }
     // Dispose prior
     rendererRef.current?.dispose?.();
-    const fmt = data.doc.source_format.toLowerCase();
-    if (fmt === "pdf") {
+    if (isPdf) {
       rendererRef.current = new PdfRenderer({
         sourceUrl: api.docSourceUrl(data.meta.source_sha256),
         anchorsProvider: () => anchors,
         doclingDocProvider: () => doclingDoc,
       }) as unknown as SourceRenderer;
+      setRendererReady(true);
     } else {
+      // Provisional noop so VizDiff has a valid renderer while the React
+      // source component is mounting. It will be replaced via onRenderer.
       rendererRef.current = makeNoopRenderer(
-        `source-preview unavailable for ${fmt}; Markdown and JSON panes remain functional`,
+        `source-preview bootstrapping for ${fmt}`,
       );
+      setRendererReady(true);
     }
-    setRendererReady(true);
     return () => {
       rendererRef.current?.dispose?.();
       rendererRef.current = null;
@@ -91,6 +98,33 @@ export function Reviewer(props: ReviewerProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.meta.source_sha256, data?.doc.source_format]);
+
+  // React source node for non-PDF formats: pickRenderer returns the
+  // format-specific component; it registers its SourceRenderer via onRenderer.
+  const sourceNode = useMemo(() => {
+    if (!data || isPdf) return undefined;
+    const Comp = pickRenderer(data.doc.source_format);
+    return (
+      <Comp
+        hash={data.doc.hash}
+        source_path={data.doc.source_path}
+        sourceUrl={api.docSourceUrl(data.meta.source_sha256)}
+        doclingDoc={doclingDoc}
+        anchors={anchors}
+        onRenderer={(r) => {
+          // Dispose the provisional noop; install the real renderer.
+          try {
+            rendererRef.current?.dispose?.();
+          } catch {
+            /* noop */
+          }
+          rendererRef.current = r;
+        }}
+        className="absolute inset-0 overflow-auto"
+      />
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.doc.hash, data?.doc.source_format, isPdf, doclingDoc, anchors]);
 
   if (loading) {
     return (
@@ -183,6 +217,7 @@ export function Reviewer(props: ReviewerProps) {
         <VizDiff
           doc={doc}
           sourceRenderer={rendererRef.current}
+          sourceNode={sourceNode}
           currentPipeline={pipeline}
           shortcutScope="tastetest"
           onApprove={(d) => submit("approved", d.notes)}

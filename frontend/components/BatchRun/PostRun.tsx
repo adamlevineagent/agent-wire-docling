@@ -16,6 +16,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { VizDiff } from "../VizDiff";
 import { PdfRenderer } from "../Renderers/pdf";
+import { pickRenderer } from "../Renderers";
 import { makeStubRenderer } from "../VizDiff/fixture";
 import type { SourceRenderer, Anchor } from "../../../contracts/vizdiff";
 import { formatDuration } from "./estimates";
@@ -298,6 +299,7 @@ function OutlierReviewDrawer({
   // (same pattern as /dev/vizdiff); other formats fall back to a stub so
   // the right-pane markdown + JSON review still works.
   const rendererRef = useRef<SourceRenderer | null>(null);
+  const isPdf = meta?.source_format === "pdf";
   useEffect(() => {
     if (rendererRef.current) {
       try {
@@ -308,13 +310,15 @@ function OutlierReviewDrawer({
       rendererRef.current = null;
     }
     if (!meta) return;
-    if (meta.source_format === "pdf") {
+    if (isPdf) {
       rendererRef.current = new PdfRenderer({
         sourceUrl: api.docSourceUrl(hash),
         anchorsProvider: () => anchors,
         doclingDocProvider: () => doclingDoc,
       });
     } else {
+      // Provisional; real renderer is registered by the React renderer below
+      // via onRenderer once mounted.
       rendererRef.current = makeStubRenderer();
     }
     return () => {
@@ -325,7 +329,30 @@ function OutlierReviewDrawer({
       }
       rendererRef.current = null;
     };
-  }, [hash, meta, anchors, doclingDoc]);
+  }, [hash, meta, isPdf, anchors, doclingDoc]);
+
+  const sourceNode = useMemo(() => {
+    if (!meta || isPdf) return undefined;
+    const Comp = pickRenderer(meta.source_format);
+    return (
+      <Comp
+        hash={hash}
+        source_path={meta.source_path}
+        sourceUrl={api.docSourceUrl(hash)}
+        doclingDoc={doclingDoc}
+        anchors={anchors}
+        onRenderer={(r) => {
+          try {
+            rendererRef.current?.dispose?.();
+          } catch {
+            /* noop */
+          }
+          rendererRef.current = r;
+        }}
+        className="absolute inset-0 overflow-auto"
+      />
+    );
+  }, [hash, meta, isPdf, doclingDoc, anchors]);
 
   // Esc-to-close
   useEffect(() => {
@@ -370,12 +397,6 @@ function OutlierReviewDrawer({
           )}
           {meta && mdQ.data != null && doclingDoc !== undefined && rendererRef.current && (
             <div className="h-full flex flex-col">
-              {meta.source_format !== "pdf" && (
-                <div className="px-3 py-1.5 border-b border-border-default bg-surface-1 text-xs text-fg-muted">
-                  Note: source render for {meta.source_format} in batch-review
-                  drawer is minimal; open the taste-test page for full render.
-                </div>
-              )}
               <div className="flex-1 min-h-0">
                 <VizDiff
                   doc={{
@@ -389,6 +410,7 @@ function OutlierReviewDrawer({
                     qualityBadges: meta.quality_signals?.warnings ?? [],
                   }}
                   sourceRenderer={rendererRef.current}
+                  sourceNode={sourceNode}
                   currentPipeline={meta.pipeline_params}
                   shortcutScope="batchreview"
                   // Read-only: no approve/reject/rerun callbacks.

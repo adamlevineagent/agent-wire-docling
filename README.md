@@ -406,6 +406,16 @@ Expected. Docling runs inside a thread pool that can't be killed externally. The
 ### Scan takes a long time (60+ seconds) on a large folder
 Expected. The scan computes a SHA-256 hash of every file. On a 1000-doc corpus this takes 30–90 seconds. The Next.js dev proxy timeout is set to 10 minutes so you won't hit a false "500" — you'll just see a spinner.
 
+### Your laptop closed / went to sleep mid-batch
+macOS will suspend the Python backend when the laptop sleeps. It does NOT cleanly resume when you open the lid — the process gets frozen in a weird state. Recipe:
+
+1. `Ctrl+C` the `start.sh` terminal window (or `pkill -f uvicorn` in a new terminal).
+2. Run `./scripts/start.sh` again.
+3. On startup, the backend marks the interrupted batch as `failed` and cleans up partial writes. Your browser auto-detects the state and shows the "Batch interrupted" UI.
+4. Click **Resume converting →** — the 100+ docs already converted get dedup-skipped, conversion picks up.
+
+For long overnight runs, use `caffeinate -i ./scripts/start.sh` to prevent sleep. macOS only.
+
 ### Batch seems stuck (progress hasn't changed for 5+ minutes)
 Rare, but possible — the worker can occasionally get stuck on a pathological document. Recipe to recover:
 

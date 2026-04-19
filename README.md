@@ -1,6 +1,6 @@
 # agent-wire-docling
 
-A local desktop tool that turns a folder of messy documents — PDFs, Word files, Excel, PowerPoint, HTML, plain text — into a matching folder of clean Markdown + JSON. With a **taste test** step in the middle so the user can verify the conversion quality on a small sample before committing to a long overnight batch.
+A **local web app** that turns a folder of messy documents — PDFs, Word files, Excel, PowerPoint, HTML, plain text — into a matching folder of clean Markdown + JSON. Two processes (a Python backend + a Next.js frontend) run on your own machine; you interact via a browser tab pointed at `http://localhost:3000`. Nothing is uploaded.
 
 Designed for people who have thousands of documents they need an AI system to actually understand — most urgently, legal discoveries, research corpora, and personal archives.
 
@@ -98,31 +98,22 @@ Paraphrase [What it does](#what-it-does) and [The taste test](#the-taste-test) i
 
 ### What it does
 
-You give this tool a folder full of documents. It goes through every file, figures out what kind of document it is, and groups similar documents together (PDFs-with-text, scanned PDFs, Word docs, spreadsheets, and so on). These groups are called **strata**.
-
-For each group, it lets you look at a few sample documents — the original on the left, the cleaned-up version on the right — so you can see whether the conversion is good. If it's good, you approve the group. If it's not, you can tweak some settings and try again. Once you're happy with a group, you **lock** it.
-
-When all your groups are locked, you hit **Run**. The tool converts every document in every group using the settings you approved, and lands the clean output in a sibling folder. Then it shows you a short list of anything that didn't work (probably a handful out of thousands), and you can either retry those with different settings or mark them as skipped.
-
-The clean output is Markdown + JSON — a format that AI systems like [Wire Node](https://github.com/adamlevineagent/agent-wire-node) can read and build a searchable knowledge base from.
+You point it at a folder. It scans every file, figures out what they are, and tells you how many it found. You click **Start converting**. It walks through every document, turns it into clean Markdown, and shows you live progress. When it's done, anything that failed lands in a short triage list with one-click fixes. The clean output is a sibling folder full of Markdown + JSON files that AI systems like [Wire Node](https://github.com/adamlevineagent/agent-wire-node) can read.
 
 Nothing is uploaded. Everything happens on your own machine.
 
-### The taste test
+### How it actually works
 
-The core idea: **don't commit to a 15-hour overnight conversion until you know it's going to work**.
+Three big buttons, in order: **Scan a folder · Start converting · Apply retries on failures**.
 
-If you just throw 1,500 documents at any converter and walk away, you often come back to discover it handled your tables wrong, or butchered your scanned faxes, or lost the formatting on your exhibits. You wasted a night. Worse: you didn't notice.
+That's the whole product. There's an optional "Preview a few first" path for the cautious — sample some docs and verify quality before committing — but the default flow is just: point, start, walk away, come back to a triage list.
 
-The taste test prevents that. You look at 5 examples from each group, approve them, and *then* walk away. If something is going to go wrong, it goes wrong in the first 10 minutes where you're watching, not overnight where you're not.
-
-This is why the tool feels more deliberate than just a file converter. That's the point.
+If you want to drive it from a chat with your AI agent instead of clicking buttons, the agent can run everything via the `awd` command-line. Your browser tab will pick up the agent's job automatically and show you progress as it happens. ("Boss mode" — see below.)
 
 ### When to use it
 
 - You have a folder (or a tree of folders) full of mixed document types
 - You want the content as plain text / Markdown, readable by any text-based tool or AI
-- You care about quality enough to spot-check
 - You're OK with letting it run on your machine for a few hours (on a 1000-doc corpus, expect 1–3 hours of conversion time)
 
 It's not useful if:
@@ -134,7 +125,7 @@ It's not useful if:
 
 ## Operating guide
 
-The UI has three stages, shown as a vertical sidebar on the left: **Scan · Taste · Batch**. You move through them in order. You can always go back.
+The UI sidebar has three stages: **Scan · Preview (optional) · Convert**. The default flow is Scan → Convert. Preview is a sideways branch you can take if you want to spot-check quality before committing.
 
 ### Stage 1 — Scan (pick a folder)
 
@@ -143,91 +134,73 @@ On first launch you see **"Point me at a folder."**
 - **Click the Scan button with the path field empty** → opens a folder picker where you can navigate your filesystem and pick your corpus folder.
 - Or paste an absolute path (e.g. `/Users/sarah/Documents/condo-case`) directly into the field and hit Enter.
 
-The scan runs in a few seconds, even for thousands of files. What you get back:
+The scan walks the folder, computes a SHA-256 of every file, and groups documents by detected type. On a 1000-doc corpus this takes 30–90 seconds. (The Next.js dev-server proxy timeout is set to 10 minutes, so even very large corpora won't hit a false "500" error.)
 
-- A **spectrum bar** at the top — each colored band is a stratum (document group), sized by how many documents it contains. This is the visual summary of what's in your folder.
-- **Detail cards** below — one per stratum with the group name, document count, and an example filename.
-- **Skipped files** at the bottom — things that were intentionally ignored (binary files, images over 100MB, system files).
+What you get back:
 
-The strata you'll typically see:
+- A **spectrum bar** at the top — each colored band is a document group ("stratum"), sized by how many documents it contains. Visual summary of your folder.
+- **Detail cards** below — one per group with name, document count, an example filename.
+- **Skipped files** at the bottom — binary files, images over 100MB, system files, our own `.understanding/` and `.docling-out/` dirs.
 
-| Stratum name | What it means |
+The groups you'll typically see:
+
+| Group name | What it means |
 |---|---|
 | `pdf-native-1-10` | PDFs with real extractable text, 1–10 pages |
 | `pdf-native-11-50` | Native-text PDFs, 11–50 pages |
 | `pdf-native-51-200`, `201+` | Longer native PDFs |
 | `pdf-scanned-*` | Scanned PDFs (no extractable text layer) — will use OCR |
-| `docx` | Word documents |
-| `pptx` | PowerPoint presentations |
-| `xlsx` | Excel spreadsheets |
+| `docx`, `pptx`, `xlsx` | Office documents |
 | `html` | Saved web pages, emails |
 | `text`, `md`, `latex` | Plain-text-like files |
 
-When you're ready, click **"Continue to taste"** in the top right, or press Enter.
+When ready, the action bar at the top right has three buttons:
 
-### Stage 2 — Taste test (verify quality per stratum)
+- **Change folder…** — pick a different folder, re-scan.
+- **Preview a few first** (ghost) — go to the optional Preview stage to spot-check quality.
+- **Start converting →** (big cyan primary) — fire the batch immediately. Locks all groups at default pipelines, kicks off the conversion, jumps you straight to the Convert/Watch view.
 
-This is the most important stage. You're going to look at a handful of documents from each stratum and decide whether the conversion looks good enough to run on all of them.
+### Stage 2 — Convert (the main event)
 
-On the left, the **tuning progress** sidebar shows every stratum with 5 dots under each name. The dots fill in as you approve samples. When a stratum has enough approvals, you **lock** it — that commits the conversion settings you approved to be used on the whole group.
+Whether you clicked **Start converting** on Scan, or your AI agent kicked off a batch via CLI, this is where you watch the work happen.
 
-#### Reviewing a doc
+The Watch view shows:
 
-1. **Click a stratum** in the sidebar to select it. The center pane shows a prompt: "Sample N docs · ⇧S".
-2. **Click "Sample N docs"** (or press Shift+S). The tool converts 5 example documents from that stratum (this takes 10–60 seconds per doc depending on type).
-3. Once conversions finish, the reviewer opens: **source on the left, cleaned Markdown on the right, and a narrow "confidence gutter" in the middle**. Each colored segment in the gutter represents one page of the source, with color showing OCR confidence (green = very confident, yellow/orange = less confident, red = probably wrong).
-4. Compare the two panes. Does the Markdown on the right faithfully capture the content of the source on the left? Are tables intact? Are headings preserved? Is the reading order sensible?
+- A narrative headline: **"Converting 612 of 1,141 documents. About 1 hour 12 minutes remaining at 0.19 docs/s."**
+- Four big stats: **Converted · Failed · Throughput · ETA**.
+- A thick cyan progress bar.
+- An **activity log** scrolling live (newest at the bottom). Each line shows when something completed:
+  - `✓ Converted a document · docx · 3.2s` — success
+  - `⚠ Couldn't convert · pdf-scanned · will retry / triage pending` — failure (will be auto-retried up to 2 times; if still failing, lands in triage)
+- Per-group mini-bars so you can see which groups have finished.
+- **Cancel** button (top right). Click it to stop. Cancellation is acknowledged immediately; the worker halts at the next document boundary (typically within 30 seconds — Docling docs run inside a thread pool that can't be killed externally, but the loop exits cleanly between docs).
 
-#### Making a verdict
+You can close the browser tab and come back hours later — the backend keeps running. When you reload, the UI auto-detects the in-flight job and resumes the Watch view.
 
-Use the **action bar at the bottom** of the reviewer, or the keyboard:
+The conversion itself runs at roughly:
+- **0.6 seconds per page** for native-text PDFs and DOCX (no OCR needed)
+- **2–5 seconds per page** for scanned PDFs (Tesseract OCR is the slow part)
+- **~3 seconds total** for HTML, MD, plain text (no parsing required)
 
-| Key | Action |
-|---|---|
-| `y` | Approve — yes this conversion is good |
-| `x` | Reject — this one's wrong; won't count toward tuning |
-| `s` | Skip — defer decision |
-| `f` | Flag — approve but mark for later attention |
-| `r` | Re-run — open the Advanced panel to tweak settings |
-| `j` / `k` | Next / previous page within the current doc |
-| `n` / `p` | Next / previous doc in the sample |
-| `1` / `2` / `3` | Switch between Rendered Markdown / Raw Markdown / JSON tabs |
-| `?` | Keyboard help overlay |
+So a 1000-document corpus that's mostly scanned legal exhibits realistically takes 1–4 hours. Mostly native-text takes 30–60 minutes. The estimate at the top of the Watch view updates live based on actual throughput.
 
-After each verdict, it auto-advances to the next doc.
+### Stage 2-Optional — Preview (spot-check before committing)
 
-#### Tuning with the Advanced panel
+If you'd rather verify a few sample conversions before running the whole thing, click **"Preview a few first"** on Scan instead of Start converting. This puts you on the Preview stage (formerly called "taste test"), where you can:
 
-If the conversion is poor, press `c` or click **Advanced (c)** to open the pipeline settings for the current stratum. Common knobs:
+1. Pick a group from the sidebar.
+2. Click **Sample N docs** (or press `Shift+S`). The tool converts 5 sample documents from that group.
+3. The reviewer opens: **source on the left, Markdown on the right, with a narrow "confidence gutter" between them**. Each gutter segment is one page of the source, color-coded by OCR confidence (green = high, yellow = medium, red = low).
+4. Approve (`y`), reject (`x`), skip (`s`), or flag (`f`) each sample. Approving writes `user_included: true` to the per-folder filemap on disk.
+5. If a group's conversions look bad, press `c` to open the **Advanced panel** and change the pipeline (e.g. enable the VLM for tough scans), then save and re-sample.
+6. When you're happy with a group, **lock** it and move to the next.
+7. When all groups you care about are locked, switch to the **Convert** stage and start the full batch.
 
-- **OCR engine** — Tesseract (default, reliable) or RapidOCR (sometimes better on poor scans)
-- **Vision model** — turn on a dedicated AI visual language model (GraniteDocling). Much better on smudged handwritten or low-quality scans, about 2× slower, uses your Mac's GPU. The panel shows a gold "Recommended" badge on this knob for scanned-PDF strata.
-- **Structure** — toggle recognition of tables, formulas, code blocks, charts.
+The tuning controls in Preview do change real Docling settings per group (OCR engine, VLM on/off, table extraction, etc.). They don't train any model — they just commit specific pipeline knobs that will be used during the full conversion.
 
-Save the settings and the tool re-runs your samples against the new pipeline.
+For most users, default settings work fine and the Preview stage is unnecessary. It exists for when something looks visibly wrong and you want to fix it before running 2 hours of conversion.
 
-#### Locking a stratum
-
-When you've approved enough samples (5 approvals, or all of them if the stratum is tiny), click **Lock**. The stratum becomes "locked" — its pipeline is committed for the batch run. You can still unlock it later if you change your mind.
-
-You don't have to tune every stratum exhaustively. Sample 3–5 docs, if they look good, lock it and move on.
-
-### Stage 3 — Batch run (convert everything)
-
-Once you have at least one locked stratum, switch to the **Batch** tab.
-
-**Pre-launch view** shows you the plan: how many docs will be converted, broken down by content type, and what pipeline will be used for each. The output directory defaults to `<your-folder>/.docling-out` but you can change it.
-
-Click **Start**. The UI switches to the live progress view:
-
-- A single big sentence: "Converting 612 of 2,496 documents. About 1 hour 12 minutes remaining at 0.19 docs/s."
-- Per-group progress bars so you can see which strata are advancing
-- A small "Recent" log of the last 7 docs processed
-- **Cancel** button at the top-right if you need to stop
-
-You can close the browser tab — the backend keeps running. When you come back, the status is still there.
-
-### Stage 4 — Post-run triage
+### Stage 3 — Triage (handle the failures)
 
 When the batch completes, the UI shows:
 
@@ -245,7 +218,7 @@ Click **Apply retries** and the tool re-runs only the docs you asked it to. Fail
 
 There's also a **"Retry all with recommended"** button that auto-picks a fix per row based on the failure reason.
 
-### Stage 5 — Hand off the output
+### Stage 4 — Hand off the output
 
 At the bottom of the post-run screen there's a **"Next"** card:
 
@@ -271,6 +244,39 @@ Copy the path, give it to Wire Node, or point any other Markdown-consuming tool 
 
 ---
 
+## Boss mode (your agent drives, you watch)
+
+You don't have to click any buttons yourself. If you have an AI agent (e.g. Claude Code) running on your machine, it can drive the whole conversion via the `awd` command-line tool:
+
+```bash
+# One-shot: scan a folder, lock all groups at defaults, batch, write the manifest
+uv run awd end-to-end /path/to/your/corpus
+```
+
+Or step-by-step (so the agent can narrate progress between steps):
+
+```bash
+uv run awd scan /path/to/corpus              # writes filemaps in each subfolder
+uv run awd batch /path/to/output --root /path/to/corpus
+uv run awd triage /path/to/output            # see what failed
+```
+
+**Your browser tab automatically discovers what the agent is doing.** Open `http://localhost:3000` once and leave it. Every 3 seconds it polls the backend for the most recent batch job; when one appears that wasn't initiated by your browser, a toast pops ("Batch detected · Switching to Convert") and the UI auto-navigates to the Watch view. You see the same activity log + progress bar + stats whether you clicked Start yourself or your agent did.
+
+This means a typical agent-driven session looks like:
+
+1. **You:** "Hey, convert all the docs in `~/legal/condo-case` and tell me when you're done."
+2. **Agent (in chat):** "Scanning… 1,141 files in 12 groups. Starting conversion now. Should take about 90 minutes."
+3. **Agent (via CLI):** runs `awd end-to-end ~/legal/condo-case` in the background.
+4. **You** (optionally): open the browser tab, see Watch view populate within 3 seconds, walk away.
+5. **Agent (when done):** "Converted 1,127 of 1,141. 14 failed — mostly large scanned PDFs. Want me to retry them with the vision model?"
+6. **You:** "Yes."
+7. **Agent:** edits `triage.yaml` to set `retry_with_pipeline: { vlm: { enabled: true } }` on each failure, runs `awd retry-triage /path/to/output`. Reports back.
+
+The browser tab is for situations where you want to *see* progress yourself; the agent doesn't need it to do its work.
+
+---
+
 ## Keyboard shortcuts (full)
 
 ### Global (anywhere in the app)
@@ -281,27 +287,27 @@ Copy the path, give it to Wire Node, or point any other Markdown-consuming tool 
 | `Esc` | Close any open dialog or overlay |
 | `g s` / `g t` / `g b` | Go to Scan / Taste / Batch stage |
 
-### Taste reviewer (when a document is open)
+### Preview reviewer (when a sample document is open)
 | Key | Action |
 |---|---|
 | `y` | Approve |
 | `x` | Reject |
 | `s` | Skip |
 | `f` | Flag |
-| `r` | Re-run (opens Advanced for this stratum) |
+| `r` | Re-run (opens Advanced for this group) |
 | `j` / `k` | Next / previous page |
 | `n` / `p` | Next / previous document |
 | `1` / `2` / `3` | Rendered MD / Raw MD / JSON tab |
 
-### Taste sidebar
+### Preview sidebar
 | Key | Action |
 |---|---|
 | `a` | Toggle approved-docs drawer |
-| `l` | Lock / unlock the current stratum |
-| `⇧S` (Shift+S) | Sample more docs from the current stratum |
+| `l` | Lock / unlock the current group |
+| `⇧S` (Shift+S) | Sample more docs from the current group |
 | `c` | Open Advanced panel |
 
-### Batch
+### Convert
 | Key | Action |
 |---|---|
 | `c` | Cancel the running batch |
@@ -382,17 +388,23 @@ cd backend && uv run uvicorn backend.main:app --reload --port 8000
 ```
 Look for import errors or missing deps. Re-run `uv sync --extra dev` if anything looks off.
 
-### Health indicator shows "not_ready · warming"
-Cosmetic — the readiness check looks for a Docling-specific cache directory that isn't populated until first conversion. The tool works fine. Ignore.
+### Health indicator stays "not_ready · warming" for a long time
+Should flip to green "ok" after the first successful conversion. If it doesn't, the `data/cache/` directory may be empty — the first scan will trigger the initial model download (~500 MB). Tool works fine regardless of this indicator.
 
 ### A DOCX/PPTX source preview spins forever
 The backend likely went down mid-session. The right-pane Markdown renders from cache; the left pane needs a live backend to fetch source bytes. Restart the backend. If it persists, check `/tmp/awd-backend.log`.
 
 ### Batch conversions are very slow on scanned PDFs
-Expected. OCR is CPU-heavy. A 50-page scanned PDF can take 2–4 minutes. If you need faster, enable the VLM pipeline in Advanced — uses your Mac's GPU, about 2× faster on scans.
+Expected. OCR is CPU-heavy. A 50-page scanned PDF can take 2–4 minutes. If you need faster, enable the VLM pipeline in Preview's Advanced panel — uses your Mac's GPU, about 2× faster on scans.
 
 ### "Convert failed — 422 Unprocessable Entity"
-Docling couldn't handle that specific document. Most common on very large PowerPoints with heavy graphics, or malformed PDFs. These land in the triage table after batch — retry with vision, or exclude.
+Docling couldn't handle that specific document. Most common on very large PowerPoints with heavy graphics, or malformed PDFs. These land in the triage table after batch — retry with vision, or exclude. Not a system-wide failure; just that specific file.
+
+### Cancel shows "Cancelling…" for a while, then finishes
+Expected. Docling runs inside a thread pool that can't be killed externally. The cancel is acknowledged immediately in the DB (UI will show `cancelled` status), but the worker needs to finish the in-flight document before fully exiting. That takes up to 2–3 minutes for a big scanned PDF.
+
+### Scan takes a long time (60+ seconds) on a large folder
+Expected. The scan computes a SHA-256 hash of every file. On a 1000-doc corpus this takes 30–90 seconds. The Next.js dev proxy timeout is set to 10 minutes so you won't hit a false "500" — you'll just see a spinner.
 
 ### Disk fills up during batch
 Docling caches model weights and intermediate outputs under `data/cache/`. Large corpora can also produce gigabytes of output. Make sure you have 10+ GB free before running a 1000-doc batch.
@@ -415,12 +427,13 @@ lsof -iTCP:3000 -sTCP:LISTEN
 This is a working prototype, not shrinkwrap software. Known rough edges:
 
 - **macOS only, tested on Apple Silicon.** It will likely run on Linux with minor tweaks (the `brew install` commands become `apt install`). Windows is untested.
+- **It's a localhost web app, not a native desktop app.** Two servers run on your machine (Python backend on :8000, Next.js frontend on :3000). You interact via a browser tab. A proper Tauri wrap is on the roadmap but not built.
 - **First-run model download** is ~500 MB and can fail on flaky networks. If it does, just re-run the first scan.
 - **Some PowerPoints** with heavy graphics hit Docling's 422 edge case. Excluded via triage.
-- **OCR confidence signals** are not per-element yet — the gutter colors pages based on page-level approximations. Fidelity improves in future Docling releases.
-- **Pause button** on batch is a display-only no-op; use Cancel + restart if you need to pause. Known deferral.
+- **Activity log shows group-level events, not per-filename.** The log reads "Converted a document · docx · 3.2s" rather than the specific filename. Filenames are preserved in the output; adding them to the live stream requires a backend event channel that's not built yet.
+- **Cancel is not instant.** Acknowledged in the UI immediately; the worker may take up to a few minutes to exit if it's mid-document (Docling runs in a thread pool that can't be killed externally).
+- **Pause button** on batch is a display-only no-op; use Cancel + restart if you need to pause.
 - **Command palette (⌘K)** is aspirational, not wired.
-- **`not_ready · warming` indicator** in the top-right is always showing; cosmetic only.
 - **Dual-write** between the old taste_sessions table and the new filemap.yaml files is intentional overlap — keeps both interfaces working during the prototype phase. Will be consolidated later.
 
 For the full running list of known scope cuts with functional-impact descriptions, see [`plans/deferral-ledger.md`](plans/deferral-ledger.md).

@@ -8,6 +8,7 @@ Implements per contracts/openapi.yaml:
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 import os
@@ -144,8 +145,173 @@ _SAMPLE_HINT_DEFAULT = 5
 _TINY_STRATUM_THRESHOLD = 6
 
 
+@router.get("/scans/latest", response_model=ScanResult | None)
+def get_latest_scan(folder: str = Query(...)) -> ScanResult | None:
+    """Return the most recent successful scan for a folder, reconstructed
+    from SQLite, or null if no scan has been run for it. Frontend uses
+    this to skip a re-scan when the user re-enters or clicks a Recent item.
+    """
+    folder = str(Path(folder).expanduser().resolve())
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id, folder_root, total_files, skipped_count "
+            "FROM scans WHERE folder_root = ? ORDER BY datetime(created_at) DESC LIMIT 1",
+            (folder,),
+        ).fetchone()
+        if not row:
+            return None
+        scan_id = row[0]
+        # Reconstruct strata + skipped from sibling tables.
+        strata_rows = conn.execute(
+            "SELECT name, size, exhaustive FROM strata WHERE scan_id = ? ORDER BY name",
+            (scan_id,),
+        ).fetchall()
+        # Examples per stratum: pull a few source paths from scan_docs
+        strata_out: list[StratumOut] = []
+        for sname, ssize, sexhaustive in strata_rows:
+            ex = conn.execute(
+                "SELECT source_path FROM scan_docs WHERE scan_id = ? AND stratum = ? LIMIT 3",
+                (scan_id, sname),
+            ).fetchall()
+            exhaustive = bool(sexhaustive)
+            hint = ssize if exhaustive else min(_SAMPLE_HINT_DEFAULT, ssize)
+            strata_out.append(
+                StratumOut(
+                    name=sname,
+                    size=ssize,
+                    sample_size_hint=hint,
+                    exhaustive=exhaustive,
+                    example_paths=[r[0] for r in ex],
+                )
+            )
+    return ScanResult(
+        scan_id=scan_id,
+        folder=row[1],
+        total_files=row[2],
+        strata=strata_out,
+        skipped=[],  # Skipped list isn't reconstructible from the current schema; empty is fine for "Recent" UX.
+        poppler_missing=False,
+        folders_with_filemaps=0,
+    )
+
+
+# Per-folder scan dedupe: if multiple POST /scan requests arrive for the
+# same folder, only run one scan; the rest await its result. Prevents the
+# "user clicks Scan five times → backend serially runs five 90-second
+# scans pegging CPU at 100%" failure mode.
+_scan_locks: dict[str, asyncio.Lock] = {}
+_scan_results_cache: dict[str, tuple[float, ScanResult]] = {}
+_SCAN_DEDUPE_TTL_S = 30.0  # Within 30s of a successful scan, return cached.
+
+
+def _do_scan_sync(req: ScanRequest) -> ScanResult:
+    """Sync scan body (CPU-bound work in a thread). Same logic that the
+    handler used pre-dedupe — extracted so we can run it via asyncio.to_thread.
+    """
+    out = scan_folder(
+        req.folder,
+        follow_symlinks=req.follow_symlinks,
+        max_files=req.max_files,
+    )
+
+    scan_id = str(uuid.uuid4())
+    now = dt.datetime.now(dt.UTC).isoformat()
+
+    by_stratum: dict[str, list[Any]] = {}
+    for d in out.docs:
+        by_stratum.setdefault(d.stratum, []).append(d)
+
+    strata_out: list[StratumOut] = []
+    for name, docs in sorted(by_stratum.items()):
+        size = len(docs)
+        exhaustive = size <= _TINY_STRATUM_THRESHOLD
+        hint = size if exhaustive else min(_SAMPLE_HINT_DEFAULT, size)
+        examples = [d.source_path for d in docs[:3]]
+        strata_out.append(
+            StratumOut(
+                name=name,
+                size=size,
+                sample_size_hint=hint,
+                exhaustive=exhaustive,
+                example_paths=examples,
+            )
+        )
+
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO scans (id, folder_root, total_files, skipped_count, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (scan_id, out.folder, out.total_files, len(out.skipped), now),
+        )
+        for s in strata_out:
+            conn.execute(
+                "INSERT INTO strata (scan_id, name, size, exhaustive) VALUES (?, ?, ?, ?)",
+                (scan_id, s.name, s.size, 1 if s.exhaustive else 0),
+            )
+        seen: set[str] = set()
+        for d in out.docs:
+            if d.source_sha256 in seen:
+                continue
+            seen.add(d.source_sha256)
+            conn.execute(
+                "INSERT INTO scan_docs "
+                "(scan_id, source_sha256, source_path, source_format, stratum, "
+                "size_bytes, page_count, signals_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    scan_id, d.source_sha256, d.source_path, d.source_format,
+                    d.stratum, d.size_bytes, d.page_count, json.dumps(d.signals),
+                ),
+            )
+        conn.commit()
+
+    try:
+        folders_written = emit_filemaps_for_scan(out, scan_id, root=Path(out.folder))
+    except Exception:
+        folders_written = 0
+
+    return ScanResult(
+        scan_id=scan_id,
+        folder=out.folder,
+        total_files=out.total_files,
+        strata=strata_out,
+        skipped=[SkippedOut(path=s.path, reason=s.reason) for s in out.skipped],
+        poppler_missing=out.poppler_missing,
+        folders_with_filemaps=folders_written,
+    )
+
+
 @router.post("/scan", response_model=ScanResult)
-def scan(req: ScanRequest) -> ScanResult:
+async def scan(req: ScanRequest) -> ScanResult:
+    """Walk a folder, stratify, write filemaps. Deduplicated per folder so
+    rapid repeated clicks collapse into one underlying scan."""
+    import time as _time
+    folder_key = str(Path(req.folder).expanduser().resolve())
+
+    # Fast path: a recent successful scan exists in cache → return it.
+    cached = _scan_results_cache.get(folder_key)
+    if cached and (_time.time() - cached[0]) < _SCAN_DEDUPE_TTL_S:
+        return cached[1]
+
+    # Acquire per-folder lock. If another scan is in-flight for the same
+    # folder, all callers serialize here; the first wins, the rest pick
+    # up the cached result on lock acquire.
+    lock = _scan_locks.setdefault(folder_key, asyncio.Lock())
+    async with lock:
+        cached = _scan_results_cache.get(folder_key)
+        if cached and (_time.time() - cached[0]) < _SCAN_DEDUPE_TTL_S:
+            return cached[1]
+        try:
+            result = await asyncio.to_thread(_do_scan_sync, req)
+        except ScanError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        _scan_results_cache[folder_key] = (_time.time(), result)
+        return result
+
+
+# Old sync handler retained as `_legacy_scan_sync_unused` for reference; the
+# active handler above wraps the same logic with async dedupe.
+def _legacy_scan_sync_unused(req: ScanRequest) -> ScanResult:
     try:
         out = scan_folder(
             req.folder,

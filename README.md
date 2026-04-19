@@ -406,6 +406,15 @@ Expected. Docling runs inside a thread pool that can't be killed externally. The
 ### Scan takes a long time (60+ seconds) on a large folder
 Expected. The scan computes a SHA-256 hash of every file. On a 1000-doc corpus this takes 30–90 seconds. The Next.js dev proxy timeout is set to 10 minutes so you won't hit a false "500" — you'll just see a spinner.
 
+### Batch seems stuck (progress hasn't changed for 5+ minutes)
+Rare, but possible — the worker can occasionally get stuck on a pathological document. Recipe to recover:
+
+1. Click **Cancel** in the top-right (cancel is acknowledged immediately).
+2. Go back to Scan, then click **Start converting →** again.
+3. The dedup logic skips every document that was already successfully converted. Only the stuck doc + anything remaining gets processed. The stuck doc will likely fail after retries and land in triage, which is where it should be.
+
+You won't re-do any completed work. `source_sha256 + pipeline_hash` is the dedup key; already-complete docs are skipped instantly.
+
 ### Disk fills up during batch
 Docling caches model weights and intermediate outputs under `data/cache/`. Large corpora can also produce gigabytes of output. Make sure you have 10+ GB free before running a 1000-doc batch.
 

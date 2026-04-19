@@ -88,7 +88,13 @@ export function FolderEntry() {
     });
   }, [registerPathInputFocuser]);
 
-  const recents = useMemo(loadRecents, []);
+  // Hydration guard: loadRecents() reads localStorage which doesn't exist
+  // during SSR. Render the recents list only after mount to avoid a
+  // server/client mismatch when the user has prior corpora saved.
+  const [recents, setRecents] = useState<Recent[]>([]);
+  useEffect(() => {
+    setRecents(loadRecents());
+  }, []);
 
   const scan = useMutation({
     mutationFn: async (folderPath: string) =>

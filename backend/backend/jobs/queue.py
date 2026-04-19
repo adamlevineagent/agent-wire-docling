@@ -264,11 +264,24 @@ class JobRunner:
         return ev
 
     def cancel(self, job_id: str) -> bool:
+        """Set the cancel flag AND interrupt the tracked asyncio task.
+
+        The flag-only path was leaving long batches stuck mid-doc — the
+        worker checks `is_cancelled` only between docs, and Docling runs
+        inside `asyncio.to_thread` which can't be killed externally.
+        Cancelling the parent task at minimum interrupts at the next
+        await boundary (typically once the in-flight doc returns).
+        """
         ev = self._cancel.get(job_id)
-        if ev is None:
-            return False
-        ev.set()
-        return True
+        any_signal = False
+        if ev is not None:
+            ev.set()
+            any_signal = True
+        task = self._tasks.get(job_id)
+        if task is not None and not task.done():
+            task.cancel()
+            any_signal = True
+        return any_signal
 
     def is_cancelled(self, job_id: str) -> bool:
         ev = self._cancel.get(job_id)

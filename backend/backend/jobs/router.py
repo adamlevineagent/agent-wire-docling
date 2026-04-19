@@ -239,9 +239,18 @@ async def cancel_batch(job_id: str) -> dict[str, Any]:
         row = q.read_job(conn, job_id)
         if not row:
             raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
-        if row["status"] in ("queued",):
+        # Acknowledge the cancel in the DB immediately so the UI sees the
+        # status change. The worker may still be inside a long doc convert
+        # (Docling runs in asyncio.to_thread, can't be killed externally),
+        # but its finalize step will respect this status as the terminal one.
+        if row["status"] in ("queued", "running"):
             q.update_job_status(conn, job_id, status="cancelled", completed_at=q.now_iso())
             row = q.read_job(conn, job_id)
+            # Publish the cancelled state to any SSE subscribers.
+            try:
+                q.runner().publish(job_id, _job_to_payload(row))
+            except Exception:
+                pass
         q.log_event(job_id, {"event": "cancel_requested", "ok": ok})
         assert row is not None
         return _job_to_payload(row)

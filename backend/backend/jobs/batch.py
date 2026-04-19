@@ -16,6 +16,7 @@ import asyncio
 import datetime as _dt
 import hashlib
 import json
+import os
 import time
 import traceback
 from pathlib import Path
@@ -40,6 +41,32 @@ def _now_iso() -> str:
     return _dt.datetime.now(_dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# Per-doc convert timeout. Even a 200-page scanned PDF with VLM should
+# never exceed this. If a doc hangs (Docling deadlock, infinite OCR loop,
+# etc) we abandon it after PER_DOC_TIMEOUT_S; the leaked worker thread
+# will eventually finish in the background but the batch keeps moving.
+# Override with env var DOCLING_PER_DOC_TIMEOUT_S if a workload needs it.
+PER_DOC_TIMEOUT_S = float(os.environ.get("DOCLING_PER_DOC_TIMEOUT_S", "600"))
+
+
+async def _await_with_doc_timeout(coro: Any) -> dict[str, Any]:
+    """Await a convert coroutine with a hard per-doc timeout.
+
+    On timeout, raises asyncio.TimeoutError so the caller's retry/triage
+    path kicks in. The underlying thread continues running (we can't kill
+    Python threads externally) but the batch worker is unblocked.
+    """
+    try:
+        result = await asyncio.wait_for(coro, timeout=PER_DOC_TIMEOUT_S)
+    except TimeoutError as e:
+        raise TimeoutError(
+            f"convert_timeout: doc exceeded {int(PER_DOC_TIMEOUT_S)}s — "
+            "Docling probably deadlocked on this file. Triage and retry "
+            "with a different pipeline (try VLM, or exclude)."
+        ) from e
+    return dict(result) if result is not None else {}
+
+
 async def _call_convert_mirrored(
     source_path: str,
     output_dir: str,
@@ -57,7 +84,7 @@ async def _call_convert_mirrored(
         output_root=output_root, mirrored=True,
     )
     if asyncio.iscoroutine(result):
-        result = await result
+        return await _await_with_doc_timeout(result)
     return dict(result) if result is not None else {}
 
 
@@ -71,7 +98,7 @@ async def _call_convert_legacy(
     fn: Any = _conv.convert_doc
     result = fn(source_path, output_dir, pipeline)
     if asyncio.iscoroutine(result):
-        result = await result
+        return await _await_with_doc_timeout(result)
     return dict(result) if result is not None else {}
 
 

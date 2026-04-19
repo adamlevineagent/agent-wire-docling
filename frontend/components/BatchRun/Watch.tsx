@@ -234,7 +234,11 @@ export function Watch({ jobId, onJobFinal, onRequestExport, onPause }: Props) {
       try {
         es = new EventSource(`/api/jobs/${jobId}/stream`);
         es.onopen = () => setTransport("sse");
-        es.onmessage = (ev) => {
+
+        // Backend uses sse_starlette and emits NAMED events
+        // (`event: job`, `event: ping`). EventSource.onmessage only fires
+        // for default-event frames, so we need explicit named listeners.
+        const onJob = (ev: MessageEvent) => {
           try {
             const data = JSON.parse(ev.data) as Job;
             applyUpdate(data);
@@ -250,12 +254,40 @@ export function Watch({ jobId, onJobFinal, onRequestExport, onPause }: Props) {
             /* ignore malformed frames */
           }
         };
+        es.addEventListener("job", onJob);
+        es.onmessage = onJob; // belt-and-suspenders for default frames too
+
         es.onerror = () => {
           console.warn("[Watch] SSE errored; falling back to poll");
           es?.close();
           es = null;
           if (!cancelled) startPolling();
         };
+
+        // Even with SSE, run a lazy 5s poll as a safety net — covers the
+        // case where the SSE connection is "open" but silent (proxy buffering,
+        // long-poll quirks, etc).
+        if (!pollTimer) {
+          pollTimer = setInterval(async () => {
+            if (cancelled) return;
+            try {
+              const j = await api.job(jobId);
+              applyUpdate(j);
+              if (
+                j.status === "completed" ||
+                j.status === "cancelled" ||
+                j.status === "failed"
+              ) {
+                if (pollTimer) {
+                  clearInterval(pollTimer);
+                  pollTimer = null;
+                }
+              }
+            } catch {
+              /* ignore */
+            }
+          }, 5000);
+        }
       } catch (e) {
         console.warn("[Watch] SSE unavailable; falling back to poll", e);
         startPolling();

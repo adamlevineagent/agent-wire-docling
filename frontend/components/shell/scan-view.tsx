@@ -57,22 +57,30 @@ export function ScanView() {
           lock_stratum: { stratum: s.name, locked: true },
         });
       }
-      return session;
+      // Fire the batch immediately — defaults across the board, no per-doc tuning.
+      // User wanted "skip to batch", they get straight to Watch with progress.
+      const job = await api.batch({
+        scan_id: scan.scan_id,
+        root: scan.folder,
+        output_dir: defaultOutputDir,
+      } as never);
+      return { session, job };
     },
-    onSuccess: (session) => {
+    onSuccess: ({ session, job }) => {
       sessionStore.setTasteSessionId(session.id);
       sessionStore.setOutputDir(session.output_dir);
+      sessionStore.setJobId(job.id);
       toast.push({
         kind: "success",
-        title: "Starting conversion",
-        detail: `All ${session.strata.length} groups locked at default pipelines.`,
+        title: "Conversion started",
+        detail: `${job.progress?.docs_total ?? "?"} documents queued. Walk away if you want.`,
       });
       setStage("batch");
     },
     onError: (err) => {
       toast.push({
         kind: "danger",
-        title: "Couldn't skip to batch",
+        title: "Couldn't start conversion",
         detail: err instanceof Error ? err.message : String(err),
       });
     },

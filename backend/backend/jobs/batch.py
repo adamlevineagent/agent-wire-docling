@@ -46,7 +46,7 @@ def _now_iso() -> str:
 # etc) we abandon it after PER_DOC_TIMEOUT_S; the leaked worker thread
 # will eventually finish in the background but the batch keeps moving.
 # Override with env var DOCLING_PER_DOC_TIMEOUT_S if a workload needs it.
-PER_DOC_TIMEOUT_S = float(os.environ.get("DOCLING_PER_DOC_TIMEOUT_S", "600"))
+PER_DOC_TIMEOUT_S = float(os.environ.get("DOCLING_PER_DOC_TIMEOUT_S", "30"))
 
 
 async def _await_with_doc_timeout(coro: Any) -> dict[str, Any]:

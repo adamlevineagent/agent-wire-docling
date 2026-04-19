@@ -65,8 +65,10 @@ export const TASTETEST_BINDINGS: ShortcutBindings = {
 };
 
 // Default batchrun bindings — owned by Agent H
+// Cancel intentionally requires Shift+C, not bare `c` — accidentally
+// hitting `c` while a multi-hour batch was running was killing real work.
 export const BATCHRUN_BINDINGS: ShortcutBindings = {
-  "c": "cancel-batch",
+  "C": "cancel-batch",
   "P": "pause-batch",
   "e": "export",
 };

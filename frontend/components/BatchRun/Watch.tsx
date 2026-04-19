@@ -324,7 +324,15 @@ export function Watch({ jobId, onJobFinal, onRequestExport, onPause }: Props) {
     bindings: BATCHRUN_BINDINGS,
     handlers: {
       "cancel-batch": () => {
-        if (!cancelling && job?.status === "running") cancel.mutate();
+        // Even with Shift+C as the binding, demand explicit confirm.
+        // We've lost too many batches to accidental keys.
+        if (cancelling || job?.status !== "running") return;
+        const total = job?.progress?.docs_total ?? 0;
+        const done = job?.progress?.docs_done ?? 0;
+        const ok = window.confirm(
+          `Cancel the running batch? ${done}/${total} docs converted will stay. Resuming later will dedup-skip them.`,
+        );
+        if (ok) cancel.mutate();
       },
       "pause-batch": () => onPause(),
       export: () => onRequestExport(),

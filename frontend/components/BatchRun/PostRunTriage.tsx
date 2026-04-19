@@ -15,6 +15,8 @@ import type { Job, PipelineParams, Triage } from "../../lib/api-client";
 import { api, ApiError } from "../../lib/api-client";
 import { Button } from "../ui/button";
 import { useToast } from "../ui/toast";
+import { useAppState } from "../shell/app-state";
+import { sessionStore } from "./session-store";
 import { formatDuration } from "./estimates";
 
 type PipelinePreset =
@@ -187,19 +189,7 @@ export function PostRunTriage({
   };
 
   if (job.status === "failed") {
-    return (
-      <div className="p-6 max-w-2xl space-y-3">
-        <div className="border border-danger rounded bg-danger-bg/30 p-4 space-y-2">
-          <div className="font-medium text-danger-fg">Batch failed</div>
-          <div className="text-sm text-fg-secondary font-mono">
-            {job.error ?? "Unknown error"}
-          </div>
-        </div>
-        <Button variant="primary" onClick={onStartOver}>
-          Start new batch
-        </Button>
-      </div>
-    );
+    return <FailedState job={job} onStartOver={onStartOver} />;
   }
 
   return (
@@ -665,6 +655,105 @@ function FixDropdown({
         ))}
         <option value="__exclude__">× Exclude from corpus</option>
       </select>
+    </div>
+  );
+}
+
+// ── Failed state with one-click resume ────────────────────────────────────
+//
+// When a batch fails (interrupted, worker died, etc), the user shouldn't
+// have to navigate back to Scan and click Start again. Already-converted
+// docs are dedup-skipped by content_hash + pipeline_hash, so resuming is
+// safe and fast. This button does the same thing as ScanView's
+// "Start converting →" — create session, lock all groups at defaults,
+// fire a fresh /batch.
+
+function FailedState({ job, onStartOver }: { job: Job; onStartOver: () => void }) {
+  const { scan, setStage } = useAppState();
+  const toast = useToast();
+
+  const resume = useMutation({
+    mutationFn: async () => {
+      if (!scan) throw new Error("No scan in app state — go back to Scan stage.");
+      const outputDir = sessionStore.getOutputDir() ||
+        `${scan.folder.replace(/\/$/, "")}/.docling-out`;
+      let session = await api.createTasteSession({
+        scan_id: scan.scan_id,
+        output_dir: outputDir,
+      });
+      for (const s of session.strata ?? []) {
+        session = await api.patchTasteSession(session.id, {
+          version: session.version ?? 0,
+          lock_stratum: { stratum: s.name, locked: true },
+        });
+      }
+      const newJob = await api.batch({
+        scan_id: scan.scan_id,
+        root: scan.folder,
+        output_dir: outputDir,
+      } as never);
+      return { session, job: newJob };
+    },
+    onSuccess: ({ session, job: newJob }) => {
+      sessionStore.setTasteSessionId(session.id);
+      sessionStore.setOutputDir(session.output_dir);
+      sessionStore.setJobId(newJob.id);
+      onStartOver(); // clear local finalJob state so Watch view renders
+      toast.push({
+        kind: "success",
+        title: "Resuming conversion",
+        detail: "Already-converted docs will be skipped (dedup by hash + pipeline).",
+      });
+    },
+    onError: (err) => {
+      toast.push({
+        kind: "danger",
+        title: "Couldn't resume",
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    },
+  });
+
+  const docsDone = job.progress?.docs_done ?? 0;
+
+  return (
+    <div className="p-6 max-w-2xl space-y-3">
+      <div className="border border-danger rounded bg-danger-bg/30 p-4 space-y-2">
+        <div className="font-medium text-danger-fg">Batch interrupted</div>
+        <div className="text-sm text-fg-secondary font-mono">
+          {job.error ?? "Unknown error"}
+        </div>
+        {docsDone > 0 && (
+          <div className="text-sm text-fg-secondary">
+            {docsDone} documents were already converted before the interruption.
+            They&apos;re saved in your output folder and will be skipped automatically
+            when you resume.
+          </div>
+        )}
+      </div>
+      <div className="flex gap-2">
+        <Button
+          variant="primary"
+          onClick={() => resume.mutate()}
+          disabled={resume.isPending || !scan}
+        >
+          {resume.isPending ? "Resuming…" : "Resume converting →"}
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={() => {
+            onStartOver();
+            setStage("scan");
+          }}
+        >
+          Back to Scan
+        </Button>
+      </div>
+      {!scan && (
+        <div className="text-xs text-fg-muted">
+          Reload the page or go back to Scan and re-validate the folder before resuming.
+        </div>
+      )}
     </div>
   );
 }

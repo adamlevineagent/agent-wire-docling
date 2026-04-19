@@ -10,10 +10,12 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
 } from "react";
 import type { ScanResult } from "../../lib/api-client";
+import { sessionStore } from "../BatchRun/session-store";
 
 export type Stage = "scan" | "taste" | "batch";
 
@@ -38,9 +40,28 @@ const Ctx = createContext<AppStateValue | null>(null);
 
 export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [stage, setStage] = useState<Stage>("scan");
-  const [folder, setFolder] = useState("");
-  const [scan, setScan] = useState<ScanResult | null>(null);
+  const [folder, setFolderState] = useState("");
+  const [scan, setScanState] = useState<ScanResult | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+
+  // Hydrate from localStorage on mount so reload survives.
+  useEffect(() => {
+    const f = sessionStore.getFolder();
+    if (f) setFolderState(f);
+    const s = sessionStore.getScanResult<ScanResult>();
+    if (s) setScanState(s);
+  }, []);
+
+  // Persist on change (so failed-batch resume + boss-mode discovery work
+  // even after a hard reload — the user's scan context isn't ephemeral).
+  const setFolder = useCallback((f: string) => {
+    setFolderState(f);
+    sessionStore.setFolder(f || null);
+  }, []);
+  const setScan = useCallback((s: ScanResult | null) => {
+    setScanState(s);
+    sessionStore.setScanResult(s);
+  }, []);
 
   const focuserRef = { current: null as (() => void) | null };
   const focusPathInput = useCallback(() => focuserRef.current?.(), []);

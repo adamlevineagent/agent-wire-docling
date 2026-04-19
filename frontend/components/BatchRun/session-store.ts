@@ -17,6 +17,8 @@
 const TASTE_KEY = "docling:taste_session_id";
 const OUTPUT_KEY = "docling:output_dir";
 const JOB_KEY = "docling:batch_job_id";
+const FOLDER_KEY = "docling:folder";
+const SCAN_KEY = "docling:scan_result";
 
 function safeGet(key: string): string | null {
   if (typeof window === "undefined") return null;
@@ -76,6 +78,38 @@ export const sessionStore = {
       } catch {
         /* ignore */
       }
+    }
+  },
+  // Persisted folder + scan result so a hard reload doesn't lose them.
+  // ScanResult is a few KB (paths + counts + stratum metadata); fits easily
+  // in localStorage. Restoring from here means user can hit Resume on a
+  // failed batch, navigate away and back, etc., without re-scanning.
+  getFolder(): string | null {
+    return safeGet(FOLDER_KEY);
+  },
+  setFolder(folder: string | null) {
+    safeSet(FOLDER_KEY, folder);
+  },
+  getScanResult<T = unknown>(): T | null {
+    const raw = safeGet(SCAN_KEY);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      return null;
+    }
+  },
+  setScanResult(result: unknown) {
+    if (result == null) {
+      safeSet(SCAN_KEY, null);
+      return;
+    }
+    try {
+      const json = JSON.stringify(result);
+      // Cap at ~5MB to avoid blowing up localStorage on giant scans.
+      if (json.length < 5_000_000) safeSet(SCAN_KEY, json);
+    } catch {
+      /* ignore */
     }
   },
 };

@@ -249,6 +249,29 @@ async def cancel_batch(job_id: str) -> dict[str, Any]:
         conn.close()
 
 
+@router.get("/jobs/latest")
+async def get_latest_batch_job() -> dict[str, Any] | None:
+    """Most recently created batch job (any status), so a passively-watching
+    UI can discover work an agent kicked off via CLI without needing localStorage.
+    Returns null if no batch job exists yet.
+    """
+    conn = _db.connect()
+    try:
+        cur = conn.execute(
+            "SELECT id FROM jobs WHERE kind = 'batch' "
+            "ORDER BY datetime(created_at) DESC LIMIT 1"
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        full = q.read_job(conn, row["id"] if isinstance(row, dict) else row[0])
+        if not full:
+            return None
+        return _job_to_payload(full)
+    finally:
+        conn.close()
+
+
 @router.get("/jobs/{job_id}")
 async def get_job(job_id: str) -> dict[str, Any]:
     conn = _db.connect()

@@ -117,6 +117,7 @@ export const api = {
   batch: (req: BatchRequest) =>
     request<Job>("/batch", { method: "POST", body: JSON.stringify(req) }),
   job: (id: string) => request<Job>(`/jobs/${id}`),
+  latestJob: () => request<Job | null>(`/jobs/latest`),
   cancelBatch: (id: string) =>
     request<Job>(`/batch/${id}/cancel`, { method: "POST" }),
   manifest: (outputDir: string) =>

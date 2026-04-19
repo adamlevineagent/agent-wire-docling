@@ -59,6 +59,32 @@ export function BatchRun() {
     return () => window.removeEventListener("focus", refresh);
   }, [tasteSessionId, jobId]);
 
+  // Boss mode: when no jobId is in localStorage, poll /jobs/latest so the UI
+  // discovers any batch an agent kicked off via CLI without browser involvement.
+  // Once we adopt one, persist to sessionStore so reload survives.
+  const latestQ = useQuery<Job | null, ApiError>({
+    queryKey: ["jobs-latest"],
+    queryFn: () => api.latestJob(),
+    enabled: hydrated && !jobId,
+    refetchInterval: 3_000,
+    staleTime: 0,
+  });
+  useEffect(() => {
+    if (!hydrated || jobId) return;
+    const j = latestQ.data;
+    if (!j || !j.id) return;
+    sessionStore.setJobId(j.id);
+    setJobId(j.id);
+    if (j.status === "completed" || j.status === "cancelled" || j.status === "failed") {
+      setFinalJob(j);
+    }
+    toast.push({
+      kind: "info",
+      title: "Picked up active job",
+      detail: `Adopted batch ${j.id.slice(0, 8)}… (status: ${j.status}).`,
+    });
+  }, [latestQ.data, hydrated, jobId, toast]);
+
   const sessionQ = useQuery<TasteSession, ApiError>({
     queryKey: ["taste-session", tasteSessionId],
     queryFn: () => api.getTasteSession(tasteSessionId!),
